@@ -102,8 +102,13 @@ function TaskBreakdownLive() {
             {tasks.map((task) => (
               <div className="artifact-row" key={task.id}>
                 <div className="artifact-row__main">
-                  <div className="artifact-row__title">{task.title || task.id.slice(0, 8)}</div>
-                  <div className="artifact-row__meta">{task.id.slice(0, 8)} · {statusLabel(task.state)}</div>
+                  <div className="artifact-row__title">{task.title || task.key || task.id.slice(0, 8)}</div>
+                  {/* The meta line printed the id outright, next to a title that was already
+                      there. The task's KEY ("WI-265") is the reference a person uses, and when
+                      there isn't one the status alone is more use than an id fragment. */}
+                  <div className="artifact-row__meta">
+                    {[task.key, statusLabel(task.state)].filter(Boolean).join(" · ")}
+                  </div>
                 </div>
                 {task.external_ref?.sor === "jira" && task.external_ref.key && (
                   <span className="sor-chip sor-chip--jira">

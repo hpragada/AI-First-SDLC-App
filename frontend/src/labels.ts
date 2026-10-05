@@ -195,3 +195,29 @@ export function engineLabel(
   const m = modelLabel(model);
   return [e, m].filter(Boolean).join(" · ");
 }
+
+/** Whether a STORED failure reason is fit to show as the explanation, or is a log excerpt.
+ *
+ * The failure classifier (`describe_build_failure`) ends by passing an unrecognised reason through
+ * word-for-word — "already a specific message - kept, never lost" — which is right for text that
+ * really is a sentence and wrong for the rest. A real failed run in the local database stored
+ * "Command failed with exit code 1 (exit code: 1)\nError output: Check stderr output for details",
+ * and the run console printed it after the word "Reason:".
+ *
+ * A log excerpt gives itself away twice over: it runs to more than one line, and it names
+ * machinery. Mirrors `_reads_as_prose` in `backend/api/serializers.py`, which does this for the
+ * console's event lines; the two are deliberately the same rule, because they are shown a few
+ * pixels apart and disagreeing would be worse than either answer.
+ *
+ * When this says no, the caller falls back to the sentence it already shows for a failure with no
+ * reason recorded, and the raw text stays where it already goes — under "Technical details".
+ */
+const LOG_MARKERS = [
+  "exit code", "traceback", "stderr", "stdout", "::", "errno", "activity task", "workflow task",
+];
+
+export function readsAsSentence(text: string): boolean {
+  if (/[\r\n]/.test(text)) return false;
+  const lowered = text.toLowerCase();
+  return !LOG_MARKERS.some((marker) => lowered.includes(marker));
+}

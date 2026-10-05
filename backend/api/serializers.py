@@ -7,6 +7,9 @@ visible and the view can hand clean kwargs to the domain service.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from rest_framework import serializers
 
 from apps.base import Role
@@ -542,6 +545,269 @@ class TraceEdgeSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+# ── Event wording ───────────────────────────────────────────────────
+#
+# One plain sentence per event action, for the run console.
+#
+# WHY THIS TABLE EXISTS. Every console line used to be built mechanically: take the internal
+# action key, swap dots and underscores for spaces, capitalise the first letter, then append the
+# first value found under message / detail / error / reason / comment / phase / execution_mode /
+# branch / workflow_id. Seven actions had a real sentence. The other thirty-six were their own
+# internal names — "Review parse mismatch", "Phase empty result", "Phase dispatched —
+# 06_task_breakdown", "Run triggered — companion". The screen-words guard
+# (tests/test_refusal_wording.py) could not have caught them: it reads source for literal strings,
+# and none of those sentences existed as a literal anywhere. They were assembled at render time.
+#
+# THE TAIL IS OPT-IN, and that is the load-bearing half. Appending whatever the payload happened
+# to hold looked harmless until you read the payloads: `test_cases.materialize_failed` carries
+# `str(exc)`, so a Python exception reached a client's screen verbatim, and `phase.empty_result`
+# carries a note written for whoever wrote the code ("companion reported ok but the engine
+# returned no final text"). Removing the two obviously-machine keys would have left both. So an
+# action now declares whether it has a tail and where that tail lives, and nothing else is ever
+# appended — which makes the next leak impossible rather than merely absent, including from
+# payload keys nobody has read yet.
+#
+# Some tails are COUNTED rather than copied: "attempt 3", "2 sections shortened". Those are the
+# small functions below, and they are the reason a tail may be a callable.
+#
+# ADDING AN EVENT THAT A RUN OWNS? Add it here too, or tests/test_event_wording.py fails. That
+# test is the whole point of the table: the thirty-seventh unworded action cannot arrive quietly.
+
+#: Payload keys allowed to supply a tail. Each one was read at its call site and holds text
+#: written for a person: `error`/`reason` are the CLASSIFIED failure causes (Bugs S.No 139),
+#: `comment` is a reviewer's own words at a gate, `title` is a document's name. Anything else —
+#: ids, branches, modes, statuses, exception text, agent keys — is not a sentence and is not here.
+SAFE_TAIL_KEYS = frozenset({"error", "reason", "comment", "title"})
+
+#: How long a tail may run before it is cut. A classified failure reason is a sentence or two; a
+#: screen-wide one came from somewhere it should not have.
+_TAIL_LIMIT = 200
+
+#: Markers of a LOG EXCERPT rather than a sentence, checked on the two failure tails.
+#:
+#: Why this is needed even though both `run.failed` call sites now classify their cause through
+#: `describe_phase_failure`: the ledger is append-only. Rows written before the classifier existed
+#: are still there and still render, and one of them in the local database says
+#: "Command failed with exit code 4294967295 (exit code: 4294967295)\nError output: Check stderr
+#: output for details". No amount of care at the write site reaches a row written last month, so the
+#: read side has to recognise one. Found by rendering every stored event rather than only the ones a
+#: test invents.
+#:
+#: A classified cause is one sentence of plain prose. A log excerpt gives itself away twice over: it
+#: runs to more than one line, and it names machinery. Both checks are on the raw text, before
+#: whitespace is collapsed, because the line break is half the evidence.
+_LOG_MARKERS = ("exit code", "traceback", "stderr", "stdout", "::", "errno", "activity task",
+                "workflow task")
+
+#: The two tails that come out of the failure CLASSIFIER, and are held to a stricter rule than the
+#: rest. `describe_build_failure` ends with `return FailureText(rest, rest)` — "already a specific
+#: message - kept, never lost" — so an unrecognised failure passes through verbatim. That is the
+#: right call for the failure BANNER, which has "Technical details" underneath it to carry the raw
+#: text; a console line has nowhere to put it. The local database holds
+#: "pr/gate setup failed: Activity task failed", which is Temporal's words after an internal step
+#: name, and it would otherwise have been the whole explanation a client was given.
+_CLASSIFIED_KEYS = frozenset({"error", "reason"})
+
+#: A classified cause is a clause of ordinary English: "the AI engine reached its usage limit",
+#: "no changes to commit", "code review kept finding blocking issues". A slash or an arrow
+#: belongs to a path, an internal step name or an error chain, and none of them has one.
+#:
+#: NOT a colon, though the obvious bad example has one. The park sites write their tail as
+#: "stopped: <cause>" on purpose and the team's own test pins "Run paused — stopped: the AI engine
+#: reached its usage limit" — so a colon rule would have thrown away a line somebody designed. That
+#: test is what caught it. Checked only on the classifier's keys anyway: `comment` is a reviewer
+#: typing to a colleague and may contain anything.
+_MACHINE_PUNCTUATION = ("/", "->")
+
+
+def _reads_as_prose(text: str, *, key: str = "") -> bool:
+    if "\n" in text or "\r" in text:
+        return False
+    lowered = text.lower()
+    if any(marker in lowered for marker in _LOG_MARKERS):
+        return False
+    if key in _CLASSIFIED_KEYS and any(mark in text for mark in _MACHINE_PUNCTUATION):
+        return False
+    return True
+
+
+def _mode_tail(payload: dict) -> str:
+    """Where this run is executing, in the words a client uses for it."""
+    return {"companion": "on your machine", "server": "on the platform"}.get(
+        str(payload.get("execution_mode") or ""), "")
+
+
+def _claim_tail(payload: dict) -> str:
+    """Only worth saying when the machine has taken this more than once."""
+    count = payload.get("claim_count") or 0
+    return f"attempt {count}" if isinstance(count, int) and count > 1 else ""
+
+
+def _next_attempt_tail(payload: dict) -> str:
+    """The attempt about to start. The payload does not carry the ceiling, so this does not
+    claim one — "attempt 3 of 3" would be invented."""
+    nxt = payload.get("next_attempt")
+    return f"now on attempt {nxt}" if isinstance(nxt, int) else ""
+
+
+def _revision_tail(payload: dict) -> str:
+    revision = payload.get("revision")
+    return f"revision {revision}" if revision else ""
+
+
+def _findings_tail(payload: dict) -> str:
+    """A review's outcome in numbers. "No problems found" is worth saying out loud — it is the
+    reader's answer to "did it pass?", and a bare "Code review finished" does not give it."""
+    found = payload.get("findings")
+    blocking = payload.get("blocking")
+    if not isinstance(found, int):
+        return ""
+    if found == 0:
+        return "no problems found"
+    said = "1 problem" if found == 1 else f"{found} problems"
+    if isinstance(blocking, int) and blocking:
+        said += f", {blocking} to fix before merging"
+    return said
+
+
+def _waited_tail(payload: dict) -> str:
+    seconds = payload.get("waited_seconds")
+    if not isinstance(seconds, int) or seconds < 60:
+        return ""
+    minutes = seconds // 60
+    return f"after {minutes} minute" + ("s" if minutes != 1 else "")
+
+
+def _sections_tail(payload: dict) -> str:
+    sections = payload.get("sections")
+    if not isinstance(sections, list) or not sections:
+        return ""
+    count = len(sections)
+    return f"{count} section shortened" if count == 1 else f"{count} sections shortened"
+
+
+def _criteria_tail(payload: dict) -> str:
+    problems = payload.get("problems")
+    total = payload.get("criteria")
+    if not isinstance(problems, list) or not problems or not isinstance(total, int):
+        return ""
+    return f"{len(problems)} of {total} not shown as checked"
+
+
+@dataclass(frozen=True)
+class EventWords:
+    """What a run's console says for one action.
+
+    `tail` is a payload key from SAFE_TAIL_KEYS, or a function of the payload, or None for the
+    great majority — a line that needs no tail is the normal case, not an omission.
+    """
+
+    sentence: str
+    tail: str | Callable[[dict], str] | None = None
+
+    def resolve_tail(self, payload: dict) -> str:
+        if self.tail is None:
+            return ""
+        raw = self.tail(payload) if callable(self.tail) else payload.get(self.tail)
+        text = str(raw).strip() if raw else ""
+        if not text:
+            return ""
+        # A copied tail must read as prose. A computed one is ours and needs no vetting.
+        if not callable(self.tail) and not _reads_as_prose(text, key=self.tail):
+            return ""
+        # A newline would split the line in two on the screen; payload text is written by agents
+        # and by exception strings, so this is not hypothetical.
+        text = " ".join(text.split())
+        return text[: _TAIL_LIMIT - 1] + "…" if len(text) > _TAIL_LIMIT else text
+
+
+#: action -> what the console says. Every action a RUN owns must appear here.
+EVENT_SENTENCES: dict[str, EventWords] = {
+    # ── Starting and sending ────────────────────────────────────────
+    "run.triggered": EventWords("Started", _mode_tail),
+    "build.triggered": EventWords("Build started"),
+    "phase.dispatched": EventWords("Sent to your machine"),
+    "build.dispatched": EventWords("Build sent to your machine"),
+    "phase.reclaimed": EventWords("Your machine picked this up again", _claim_tail),
+    "build.revision_dispatched": EventWords("Changes sent back to your machine"),
+    "build.remediation_dispatched": EventWords("Review fixes sent to your machine"),
+    # ── Progress and results ───────────────────────────────────────
+    "phase.reported": EventWords("Your machine reported back"),
+    "build.reported": EventWords("Your machine finished the build and reported back"),
+    "run.executed": EventWords("Finished"),
+    # The title, never the payload's own `message`: that one is the artifact TYPE joined to the
+    # title ("prd — PRD — Spend Export"), and the type is a stored key.
+    "artifact.registered": EventWords("Draft saved", "title"),
+    "artifacts.published": EventWords("Published to your tools"),
+    "build.pr_opened": EventWords("Pull request opened"),
+    "build.merged": EventWords("Merged"),
+    "build.reviewed": EventWords("Code review finished", _findings_tail),
+    "review.dispatched": EventWords("Code review started"),
+    # NOT "Code review finished", which is what `build.reviewed` says. The two fire seconds apart —
+    # the machine sends its findings, then the platform records them — and giving both the same
+    # sentence printed it twice in a row on a real console, which reads as a glitch and loses the
+    # difference. Found by looking at a real run rather than at the table.
+    #
+    # `reason` is only set when the review STOPPED, and is classified when it is. Paired with the
+    # sentence swap in `get_message`, a stopped review reads "Code review stopped — the AI engine
+    # closed before it finished".
+    "review.reported": EventWords("Your machine sent its code review back", "reason"),
+    # ── Waiting for a person ───────────────────────────────────────
+    # The next five keep the wording the team chose on 2026-09-21 and in the pause batch. Moved
+    # here unchanged — re-opening settled copy is not this batch's business.
+    # The two PARKED lines keep their `reason`, which holds the classified cause of the stop
+    # ("stopped: the AI engine reached its usage limit") and not the raw fault — that goes to
+    # `error_detail`, which nothing here reads. A park with no explanation is the shape Bugs S.No
+    # 146 was about: the reader is told their run has halted and not why.
+    "run.parked": EventWords("Run paused", "reason"),
+    "build.parked": EventWords("Build paused", "reason"),
+    # `run.paused` is a PERSON pausing, so there is nothing to explain — they know why.
+    "run.paused": EventWords("Run paused"),
+    "run.pause_signal_failed": EventWords(
+        "Paused — your machine won't be given new work, but the step already running may still "
+        "finish"
+    ),
+    "run.resume_signal_failed": EventWords("Resumed — your machine can pick this up again"),
+    "run.resumed": EventWords("Picked up again"),
+    "phase.takeover": EventWords("Waiting for you — nothing was heard back in time"),
+    "build.takeover": EventWords("Build waiting for you — nothing was heard back in time"),
+    # `comment` is the reviewer's own words at the gate, which is the one thing the reader wants.
+    "run.rejected": EventWords("Changes requested at the review gate", "comment"),
+    "build.rejected": EventWords("Build changes requested at the review gate", "comment"),
+    "run.revision_requested": EventWords(
+        "Changes requested — a new attempt was started", _revision_tail),
+    "build.merge_conflict": EventWords(
+        "Merge hit a conflict — resolve it in GitHub, then approve again"),
+    # ── Something went wrong ───────────────────────────────────────
+    # `error` and `reason` here are the CLASSIFIED cause, not the raw fault: the call sites put the
+    # technical text in `error_detail`, which nothing on this screen reads. Keeping these two is
+    # the reason the tail is opt-in rather than removed — without them a reader sees "Build
+    # stopped" and is never told why (Bugs S.No 139).
+    "run.failed": EventWords("Stopped after a problem", "error"),
+    "build.failed": EventWords("Build stopped", "reason"),
+    "run.revision_failed": EventWords("The new attempt couldn't be started", "reason"),
+    "phase.empty_result": EventWords(
+        "The agent finished without writing anything — the draft is empty"),
+    "test_cases.materialize_failed": EventWords(
+        "The test cases couldn't be created from this plan"),
+    "review.timeout": EventWords("The code review didn't finish in time", _waited_tail),
+    "review.parse_mismatch": EventWords(
+        "The review asked for changes but didn't say which — it is being retried"),
+    "review.acceptance_criteria_unverified": EventWords(
+        "The review didn't show it checked this task's acceptance criteria", _criteria_tail),
+    "run.worker_stalled": EventWords("Your machine stopped reporting back"),
+    "build.secret_blocked_retry": EventWords(
+        "A password or key was found before pushing — starting over", _next_attempt_tail),
+    "build.remediation_exhausted_retry": EventWords(
+        "Review fixes ran out of attempts — starting over", _next_attempt_tail),
+    # ── Housekeeping ───────────────────────────────────────────────
+    "manifest.truncated": EventWords(
+        "The agent's briefing was shortened to fit", _sections_tail),
+    "run.reconciled": EventWords("Put back in step with your machine"),
+    "run.worker_recovered": EventWords("Your machine started reporting again"),
+}
+
+
 # ── Event ───────────────────────────────────────────────────────────
 class EventSerializer(serializers.ModelSerializer):
     # The run console renders each event by `kind` (colour) + `message` (text). The Event row
@@ -566,43 +832,34 @@ class EventSerializer(serializers.ModelSerializer):
         if any(w in action for w in ("gate", "clarification", "takeover", "parked", "warning",
                                      "empty")):
             return "warn"
-        if any(w in action for w in ("executed", "published", "merged", "approved", "registered", "resumed")):
+        if any(w in action for w in ("executed", "published", "merged", "approved",
+                                     "registered", "resumed")):
             return "ok"
         return "info"
 
     def get_message(self, obj) -> str:
-        label = (obj.action or "event").replace(".", " ").replace("_", " ").strip()
-        label = label[:1].upper() + label[1:]
+        """One sentence for the run console. See EVENT_SENTENCES above for the whole vocabulary.
+
+        Nothing is composed from the action key any more, and nothing is appended that the action
+        did not ask for — the two habits that put "Phase dispatched — 06_task_breakdown" and a raw
+        Python exception on a client's screen.
+        """
         payload = obj.payload or {}
-        # Run-console fix (2026-09-21, option A): two lines named the machinery, not what the
-        # reader sees. The banner above them says "Paused", and a failed review report is a
-        # review that STOPPED, not a report that arrived.
-        if obj.action == "build.parked":
-            label = "Build paused"
-        elif obj.action == "run.parked":
-            label = "Run paused"
-        elif obj.action == "run.paused":
-            label = "Run paused"
-        elif obj.action == "run.pause_signal_failed":
-            # What this means FOR THE READER, not what failed for us. The run is paused and their
-            # machine will not be handed new work — that part worked. What did not is our
-            # ability to tell the running step to stop at its next checkpoint, which for them shows
-            # up as the current step possibly finishing. The transport error itself is in
-            # `error_detail`, which this never prints.
-            label = ("Paused — your machine won't be given new work, but the step already "
-                     "running may still finish")
-        elif obj.action == "run.resume_signal_failed":
-            label = "Resumed — your machine can pick this up again"
-        elif obj.action == "review.reported" and payload.get("status") == "failed":
-            label = "Code review stopped"
-        # `reason` covers build.failed/build.takeover (Bugs S.No 139 — the classified failure
-        # reason); without it the console showed a bare "Build failed" with no explanation.
-        for key in ("message", "detail", "error", "reason", "comment", "phase",
-                    "execution_mode", "branch", "workflow_id"):
-            value = payload.get(key)
-            if value:
-                return f"{label} — {value}"
-        return label
+        words = EVENT_SENTENCES.get(obj.action or "")
+        if words is None:
+            # Either a historical row whose action no longer exists, or one added without a
+            # sentence — which tests/test_event_wording.py fails on, so it should not reach here.
+            # Humanising the key is still better than a blank line: an empty console read as
+            # "this run has nothing to show" (Bugs.xlsx row 21 iv).
+            label = (obj.action or "event").replace(".", " ").replace("_", " ").strip()
+            return label[:1].upper() + label[1:]
+        sentence = words.sentence
+        # The one line whose wording depends on its payload rather than its action: a review that
+        # reports FAILED is a review that stopped, not a report that arrived (2026-09-21).
+        if obj.action == "review.reported" and payload.get("status") == "failed":
+            sentence = "Code review stopped"
+        tail = words.resolve_tail(payload)
+        return f"{sentence} — {tail}" if tail else sentence
 
 
 # ── Approval / gate decision ────────────────────────────────────────

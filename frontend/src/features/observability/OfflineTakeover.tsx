@@ -115,8 +115,10 @@ function OfflineTakeoverLive() {
               screen, not for us. "The platform parks the run for takeover rather than letting it
               hang" described our design decision; a raw UUID was the subject of the sentence
               below it; and the details list printed a full id, a database status value and an
-              ISO timestamp. The labelled short Run ID stays — it is a reference a person quotes
-              when asking about a task — and everything else now reads as a sentence. */}
+              ISO timestamp. Everything here now reads as a sentence. The labelled short Run ID
+              survived that pass and came off on 2026-10-05: the four rows above it — the task, the
+              phase, why it stopped and when it started — already say which run this is, in words,
+              so the id was the only machine string left on the screen. */}
           <p className="page-head__sub">
             When your machine goes offline part-way through, a task stops and waits here instead of
             hanging.
@@ -136,7 +138,6 @@ function OfflineTakeoverLive() {
               ["Phase", phaseLabel(parkedRun.agent_phase ?? parkedRun.agent_key)],
               ["Stopped", parkedRun.status === "failed" ? "After an error" : "After going quiet"],
               ["Started", new Date(parkedRun.created_at).toLocaleString()],
-              ["Run ID", parkedRun.id.slice(0, 8)],
             ]}
           />
           <Banner variant="info">

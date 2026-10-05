@@ -1169,3 +1169,86 @@ shared epic must be prepared sequentially** — never in parallel to save time.
 - Bugs S.No 294 (the two labels) and S.No 292 (the technical text, which did reach the screen once
   during development and is now covered by a test). Standing rule: no machine words on a client's
   screen.
+
+---
+
+### TC-711 · The run console describes the task in words, not in our names for things
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Runs & Console |
+| Type | UX |
+| Priority | High |
+| Screen | `/runs/:id` |
+| Persona | P1 Owner-Admin · P3 Engineer |
+| Automation | Partly |
+
+**Preconditions**
+- A run that has progressed past its first step. A build run is best — it produces the most lines.
+  A finished or failed run from a previous day works just as well.
+
+**Steps**
+1. Open the run console and **read every line in the progress list, top to bottom.**
+2. Look specifically at the end of each line, after any dash.
+3. Open a run that **failed**, and read the red banner above the list as well.
+4. Open a run that is **still going** and watch a few new lines arrive.
+
+**Expected**
+- Every line is a sentence about the task. "Started on your machine." "Sent to your machine." "Your
+  machine reported back." "Code review finished — 6 problems, 2 to fix before merging."
+- **No line is a name with the spaces put in**: nothing like "Phase dispatched", "Review parse
+  mismatch", "Phase empty result", "Build remediation exhausted retry", "Workitem transitioned".
+- **Nothing after a dash is a machine value.** Not an identifier of any kind, not a branch name, not
+  a word like `companion` or `06_task_breakdown` on its own, and not a programming error.
+- Two lines that arrive seconds apart say **different** things.
+- The red banner either explains the failure in a sentence, or says the task stopped and can be run
+  again — never a command line, an exit code or the words "stderr".
+
+**Pass / Fail**
+- PASS if you could read the whole list aloud to a client without translating anything.
+- FAIL on any line you would have to explain, any identifier, or any programming error.
+
+**Notes**
+- Bugs S.No 301 and 302. There are 43 different things that can appear here, and a given run shows
+  only some of them, so this case is worth repeating on runs of different phases — a planning run, a
+  build, one that paused, one that failed.
+- The wording comes from the **platform**, not the browser, so the same words appear for everyone.
+  A missing one is caught by a test before it ships, but a *badly worded* one is not — if a line is
+  technically correct and still reads oddly, raise it.
+
+---
+
+### TC-712 · No identifier appears on the run console
+
+| Field | Value |
+|---|---|
+| Suite | TS-07 Runs & Console |
+| Type | UX |
+| Priority | Medium |
+| Screen | `/runs/:id`, `/recovery`, `/clarifications`, task breakdown |
+| Persona | P1 Owner-Admin |
+| Automation | Partly |
+
+**Steps**
+1. On a run console, read the trail at the very top, the heading, and the line beneath it.
+2. **Hover over** the work item and the heading, and read any tooltip.
+3. Open a **parked** run from `/recovery` and read its details list.
+4. Open **Clarifications**, expand an answered question, and read the link at the bottom.
+5. On a run that was **retried automatically**, read the blue "Automatically retried" box.
+6. Open a **task breakdown** artifact and read the line under each task's name.
+
+**Expected**
+- None of these shows a 36-character identifier, or the first eight characters of one. In
+  particular: no **"Run ID"** field anywhere, and the trail at the top reads like the heading —
+  "Implementation · WI-18" — not "Run 3f9a1b2c".
+- Each of the links names where it goes in words: "Open the run that asked this", "Open the new
+  attempt — Running".
+- The task list shows each task's **number** beside its status, or just the status.
+
+**Pass / Fail**
+- PASS if nothing on these screens is a machine identifier, including in tooltips.
+- FAIL on any id fragment, under any label.
+
+**Notes**
+- Bugs S.No 304. The run's id is still in the **address bar**, which is where support takes it from.
+- Step 2 matters: a second copy of the id used to be a tooltip, where it survived the first pass.

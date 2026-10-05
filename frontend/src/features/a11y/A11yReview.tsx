@@ -24,6 +24,7 @@ import {
   Panel,
   Skeleton,
   Textarea,
+  writeErrorSentence,
 } from "../../components/ui";
 import type { A11yReviewItem } from "../../types";
 import { A11yTabs } from "./A11yTabs";
@@ -289,7 +290,7 @@ function ItemPanel({
 
           {decide.isError && (
             <Banner variant="danger" title="The decision could not be saved">
-              {(decide.error as Error).message} Nothing was changed — your note is still here.
+              {writeErrorSentence(decide.error)} Nothing was changed — your note is still here.
             </Banner>
           )}
 

@@ -650,3 +650,47 @@ consequences you must plan around:
 - **Scheduling consequence worth carrying into TS-09 and TS-15:** because the guard is per work
   item, every gate-producing run on a shared epic must be run **sequentially**. Phases cannot be
   prepared in parallel on the same work item.
+
+---
+
+### TC-218 · When the app can't be reached, the accessibility screens say so in plain words
+
+| Field | Value |
+|---|---|
+| Suite | TS-14 Recovery & Takeover |
+| Type | Negative |
+| Priority | Medium |
+| Screen | Pages & audit, Review queue, Conformance statement |
+| Persona | P4 QA Lead |
+| Automation | Partly |
+
+**Preconditions**
+- Somebody who can stop the platform for a few seconds — or simply turn off your network adapter,
+  which is easier and proves the same thing.
+
+**Steps**
+1. On **Pages & audit**, open **Add a page** and fill it in. **Do not submit yet.**
+2. Disconnect the network (or have the platform stopped).
+3. Press **Add page**.
+4. Reconnect, then repeat the same two steps for: starting an audit, saving a decision on a finding
+   in the **Review queue**, saving the **Conformance statement** draft, and signing it.
+5. Reconnected, deliberately provoke a real refusal: submit a page list containing the same route
+   twice.
+
+**Expected**
+- At step 3 the red banner reads **"Your browser couldn't connect, so nothing was saved. Try
+  again."**
+- It never reads **"Failed to fetch"**, "NetworkError", "Unexpected token", or anything about JSON.
+- The same for every screen in step 4.
+- At step 5 the banner shows the **platform's own refusal, word for word** — the sentence naming the
+  duplicate route. That one must NOT be replaced with a general message.
+
+**Pass / Fail**
+- PASS if a lost connection reads as a lost connection, and a real refusal still explains itself.
+- FAIL on any browser or programming text, and equally on a real refusal being flattened into
+  "something went wrong".
+
+**Notes**
+- Bugs S.No 303. Ten places across these three screens. S.No 248 fixed this on the rest of the
+  product; these were missed, and the distinction in step 5 is the reason that fix is not simply
+  "replace the message" — a refusal in words is the most useful thing a screen can show.

@@ -140,3 +140,36 @@ re-implement either rule in TypeScript — that is what `previewable` was added 
 or a user wrote, and that name goes into an HTTP header. Use `attachment_response` / `inline_response`
 rather than building `Content-Disposition` by hand; they sanitise the name and write both the ASCII
 and the UTF-8 form (RFC 6266).
+
+### S-19: what the run console SAYS is owned by the platform (2026-10-05)
+
+Every line in the progress list is a sentence the **server** chose, from `EVENT_SENTENCES` in
+`backend/api/serializers.py` — one entry per event action a run can own, with an optional tail. The
+screen prints what it is given and composes nothing. Do not rebuild any of this in TypeScript; that
+is the `previewable` lesson, and here it is worse, because the wording is the whole feature.
+
+Before this, each line was the event's internal action key with its punctuation swapped for spaces,
+plus the first value found in the payload under a nine-key fallback chain. Seven actions had real
+sentences; thirty-six read as "Review parse mismatch" and "Phase dispatched — 06_task_breakdown",
+and one of them printed a database exception. The Screen Words guard
+(`tests/test_refusal_wording.py`) could not see any of it — the sentences existed nowhere as
+literals.
+
+**Two rules worth knowing before changing anything here:**
+
+| | |
+|---|---|
+| **A tail is opt-in** | An action declares whether it has one and where it lives. Only `error`, `reason`, `comment` and `title` may supply one, and each was read at its call site. Nothing else is ever appended. |
+| **A copied tail must read as prose** | More than one line, or a word like "exit code" or "stderr", means a log excerpt, and it is dropped. The failure classifier passes an unrecognised reason through verbatim by design, and the ledger is append-only, so the read side has to recognise one. |
+
+`tests/test_event_wording.py` walks the backend for every `log_event` call recorded against a run and
+fails if any action has no sentence — so adding an event is also adding its words. The one hole it
+cannot close is the MCP `log_event` tool, which lets an agent record anything; that is why
+`get_message` still humanises an unknown key rather than rendering a blank line.
+
+**The frontend shares one rule with it:** `readsAsSentence` in `frontend/src/labels.ts` mirrors the
+backend's prose check, and the failure banner uses it on the stored reason. The two are deliberately
+the same rule, because they are shown a few pixels apart.
+
+No run id appears on S-19 or on the offline-takeover screen. The work item's key and the phase name
+the run in words; the id is in the address bar for support.

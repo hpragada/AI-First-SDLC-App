@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, ConfirmDialog, Console, Disclosure, Panel, Spinner, WriteError } from "../../components/ui";
-import { engineLabel } from "../../labels";
+import { engineLabel, readsAsSentence, runStatusLabel } from "../../labels";
 import { isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
@@ -147,16 +147,30 @@ function RunConsoleLive() {
                 : "failed";
 
   const lines = (events.data ?? []).map(eventLine);
-  // Surface a concrete failure reason (Bugs.xlsx row 21 v.1) — the last error event, or an
-  // error captured on the run's outputs — rather than a generic "engine exited" message.
+  // Surface a concrete failure reason (Bugs.xlsx row 21 v.1) — the error captured on the run's
+  // outputs — rather than a generic "engine exited" message.
   const outputsError =
     run.data.outputs && typeof run.data.outputs === "object"
       ? ((run.data.outputs as Record<string, unknown>).error ??
         (run.data.outputs as Record<string, unknown>).detail)
       : undefined;
-  const lastError = [...(events.data ?? [])].reverse().find((e) => e.kind === "err")?.message;
+  // The stored reason is used only if it READS as a sentence (2026-10-05). The classifier's last
+  // resort is to pass an unrecognised failure through word-for-word, so a real run here said
+  // "Reason: Command failed with exit code 1 (exit code: 1) Error output: Check stderr output for
+  // details" — the engine's own log, in the place where the explanation goes, while the event line
+  // a few pixels below had already learned to refuse exactly that text. When it is a log excerpt we
+  // fall through to the sentence this banner already shows for a failure with no reason recorded.
+  // The raw text is not lost: it is under "Technical details", where this screen already puts it.
+  //
+  // The last error EVENT used to be the middle step of that fall-through, and the live check is why
+  // it is not any more: with the log excerpt refused, the banner read "Reason: Stopped after a
+  // problem" directly above an event line saying "Stopped after a problem". It restated the line
+  // below it and called that the reason. The event list is always right there, so when we have no
+  // explanation the banner's own sentence — which says what it means and what to do — is better.
   const failureReason =
-    (typeof outputsError === "string" && outputsError) || lastError || undefined;
+    typeof outputsError === "string" && outputsError && readsAsSentence(outputsError)
+      ? outputsError
+      : undefined;
   // Run-console wording (2026-09-21, option A): the sentence above is for the reader; the raw
   // text behind it (the engine's output, the HTTP call) is `error_detail`, shown only under a
   // closed "Technical details". `kept` is what the platform says a paused run keeps — a build
@@ -209,7 +223,17 @@ function RunConsoleLive() {
 
   return (
     <div className="canvas-pad">
-      <Breadcrumb items={[{ label: "Phases & Runs", href: "/runs" }, `Run ${id.slice(0, 8)}`]} />
+      {/* The last crumb names the run the way the heading below does — the phase, and the work
+          item when it has loaded. It used to read "Run 3f9a1b2c", which was the id again under a
+          different label, and the crumb a person reads first. */}
+      <Breadcrumb
+        items={[
+          { label: "Phases & Runs", href: "/runs" },
+          [phaseLabel(run.data.agent_phase ?? run.data.agent_key), workItem.data?.key]
+            .filter(Boolean)
+            .join(" · "),
+        ]}
+      />
       <div className="page-head">
         <div className="page-head__titles">
           {/* Bugs S.No 172: lead with the work item (key + title) so the user can confirm the
@@ -226,13 +250,13 @@ function RunConsoleLive() {
                 Work item <strong>{workItem.data.key || workItem.data.title || workItem.data.id.slice(0, 8)}</strong>
               </span>
             )}
-            {/* A labelled Run ID stays: it is a real reference a user quotes when asking about
-                a task, which is why the team kept it. What went is the raw workflow id beside it
-                — a Temporal identifier that references nothing a person can look up — and the
-                SECOND printing of this same id, which the panel below used as its title. */}
-            <span className="meta-item" title={id}>
-              Run ID <strong>{id.slice(0, 8)}</strong>
-            </span>
+            {/* The Run ID came off here on 2026-10-05, finishing what the earlier pass started.
+                That pass removed the raw workflow id and the second printing of this one, and kept
+                a labelled short id on the grounds that a user quotes it when asking about a task.
+                Looking again with the team: the two things either side of it — the work item's key
+                and the phase in the heading above — already name this run in words a client
+                recognises, so the id was the only machine string left on the page and it was not
+                earning its place. Support can reach a run from the work item plus the phase. */}
             <span className="meta-item">
               {/* Screen Words group 4, Option A: kept, but as the product and model name —
                   `claude · claude-opus-5` told a client nothing. */}
@@ -313,9 +337,12 @@ function RunConsoleLive() {
           <Banner variant="info" title="Automatically retried">
             The platform started a fresh attempt for this work item — you don't need to
             re-trigger.{" "}
+            {/* The id went with the Run ID above it (2026-10-05). The status stays, because that
+                is the thing worth knowing before clicking — and it goes through the same label
+                vocabulary as every other status instead of having its underscores swapped out. */}
             <Link to={`/runs/${retryRunId}`}>
-              Continued as run {retryRunId.slice(0, 8)}
-              {retryRun.data ? ` (${retryRun.data.status.replace(/_/g, " ")})` : ""} ↗
+              Open the new attempt
+              {retryRun.data ? ` — ${runStatusLabel(retryRun.data.status)}` : ""} ↗
             </Link>
           </Banner>
         )}

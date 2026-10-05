@@ -249,8 +249,11 @@ export function ClarificationHistory({
                           ))}
                         </section>
                       ))}
+                      {/* The link already goes to that run; printing its id as the label added
+                          nothing a person could use. Same decision as the Run console's own
+                          Run ID, 2026-10-05. */}
                       <Link className="t-sm" to={`/runs/${c.run}`}>
-                        Open run {c.run.slice(0, 8)} ↗
+                        Open the run that asked this ↗
                       </Link>
                     </div>
                   )}

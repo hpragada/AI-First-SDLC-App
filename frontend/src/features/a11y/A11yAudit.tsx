@@ -29,6 +29,7 @@ import {
   Switch,
   Table,
   Textarea,
+  writeErrorSentence,
 } from "../../components/ui";
 import type { BadgeVariant } from "../../components/ui";
 import { useRunners } from "../identity/hooks";
@@ -339,7 +340,7 @@ function AddPages({
 
         {register.isError && (
           <Banner variant="danger" title="Nothing was registered">
-            {(register.error as Error).message}
+            {writeErrorSentence(register.error)}
           </Banner>
         )}
       </Modal>
@@ -410,7 +411,7 @@ function AddPages({
 
       {error && (
         <Banner variant="danger" title="This could not be read">
-          {error.message}
+          {writeErrorSentence(error)}
         </Banner>
       )}
     </Modal>
@@ -557,7 +558,7 @@ function PageEditor({
 
       {error && (
         <Banner variant="danger" title="Nothing was changed">
-          {error.message}
+          {writeErrorSentence(error)}
         </Banner>
       )}
     </Modal>
@@ -702,7 +703,7 @@ function RunStrip({
 
       {start.isError && (
         <Banner variant="danger" title="The audit could not be started">
-          {(start.error as Error).message}
+          {writeErrorSentence(start.error)}
         </Banner>
       )}
 
@@ -931,7 +932,7 @@ function KeyboardJourneys({ projectId, hasMachine }: { projectId: string; hasMac
 
           {start.isError && (
             <Banner variant="danger" title="Nothing was started">
-              {(start.error as Error).message}
+              {writeErrorSentence(start.error)}
             </Banner>
           )}
 
@@ -1472,8 +1473,8 @@ function PastAudits({
                                 : out.reason || "Nothing was asked again.",
                             }),
                           )
-                          .catch((err: Error) =>
-                            setAsked({ id: audit.id, text: err.message }),
+                          .catch((err: unknown) =>
+                            setAsked({ id: audit.id, text: writeErrorSentence(err) }),
                           );
                       }}
                     >
@@ -1762,7 +1763,7 @@ export function A11yAudit() {
 
               {(update.isError || remove.isError) && (
                 <Banner variant="danger" title="That change was not saved">
-                  {((update.error ?? remove.error) as Error).message}
+                  {writeErrorSentence(update.error ?? remove.error)}
                 </Banner>
               )}
 

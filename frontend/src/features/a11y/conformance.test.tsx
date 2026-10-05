@@ -366,3 +366,58 @@ describe("S-37 · which run this statement was compiled from", () => {
     await screen.findByText("No completed audit is recorded for this project");
   });
 });
+
+// ── A SAVE that fails says it in the product's words (Section 4, part B) ─────────────────────
+//
+// The accessibility screens were the only ones left rendering `(error as Error).message` straight
+// into a banner. Every other screen sends a failure through `writeErrorSentence`, which keeps a
+// 4xx verbatim — the server refused this particular thing and said why — and replaces the other
+// two kinds. A dropped connection arrives as an ApiError whose own message is the BROWSER's
+// "Failed to fetch", so rendering `.message` printed exactly that. Bugs S.No 248 fixed this
+// everywhere else; these screens were missed.
+describe("A save that fails speaks the product's language, not the browser's", () => {
+  it("a dropped connection says the app could not be reached, never “Failed to fetch”", async () => {
+    const healthy = stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      // Only the signature POST drops; everything the screen reads still answers, so the failure
+      // under test is the SAVE and not the load.
+      if (String(input).includes("/sign/")) throw new TypeError("Failed to fetch");
+      return healthy(input);
+    }));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    const boxes = await screen.findAllByRole("checkbox");
+    await userEvent.click(boxes[0]);
+    await userEvent.click(boxes[1]);
+    await userEvent.click(screen.getByRole("button", { name: "Sign" }));
+
+    await screen.findByText("Your browser couldn't connect, so nothing was saved. Try again.");
+    expect(screen.queryByText(/Failed to fetch/)).toBeNull();
+    // The banner's own title still frames it, which is the half that was already right.
+    expect(screen.getByText("This was not signed")).toBeDefined();
+  });
+
+  it("a refusal in words is kept exactly as the server wrote it", async () => {
+    // The case that must NOT be replaced: a 4xx is the server explaining this particular refusal,
+    // and that sentence is the whole value of the banner.
+    const said = "The evidence has changed since this statement was compiled.";
+    const healthy = stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/sign/")) {
+        return {
+          ok: false, status: 409, statusText: "stub",
+          text: async () => JSON.stringify({ detail: said }),
+        } as Response;
+      }
+      return healthy(input);
+    }));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    const boxes = await screen.findAllByRole("checkbox");
+    await userEvent.click(boxes[0]);
+    await userEvent.click(boxes[1]);
+    await userEvent.click(screen.getByRole("button", { name: "Sign" }));
+
+    await screen.findByText(said);
+  });
+});

@@ -198,7 +198,10 @@ describe("the task's own screen", () => {
     stubRun({});
     renderConsole();
 
-    await waitFor(() => expect(screen.getByText(/Implementation/i)).toBeDefined());
+    // The heading, specifically: the breadcrumb's last crumb also names the phase now that it
+    // no longer prints the run's id (2026-10-05), so a loose match finds two.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /Run console/i })).toBeDefined());
     expect(screen.queryByText(/This task has stopped/i)).toBeNull();
   });
 
@@ -217,7 +220,10 @@ describe("the task's own screen", () => {
     stubRun({});
     renderConsole();
 
-    await waitFor(() => expect(screen.getByText(/Implementation/i)).toBeDefined());
+    // The heading, specifically: the breadcrumb's last crumb also names the phase now that it
+    // no longer prints the run's id (2026-10-05), so a loose match finds two.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /Run console/i })).toBeDefined());
     expect(screen.queryByText(/This task has stopped/i)).toBeNull();
   });
 });

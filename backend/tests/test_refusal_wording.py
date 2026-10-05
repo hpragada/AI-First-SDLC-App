@@ -81,8 +81,13 @@ REACHABLE = [
 #     (`gate.min_confidence`), read by the admin who wrote that file; naming the setting is the fix.
 #   - management commands (apps/*/management/commands) — a developer's terminal, not a screen.
 #   - orchestration/*activities*, build_report, phase_report, review_provider — they run inside
-#     Temporal workers; a failure there becomes a run's recorded outcome, which the run console
-#     presents through its own copy, not a REST refusal.
+#     Temporal workers; a failure there becomes a run's recorded outcome, not a REST refusal.
+#     CORRECTED 2026-10-05: this entry used to end "…which the run console presents through its own
+#     copy". There was no such copy. The console built every line by mangling the internal action
+#     key and appending the first value it found in the payload, so these modules' events DID reach
+#     a client's screen as "Review parse mismatch" and worse. The exclusion itself still stands —
+#     these are not REST refusals and this file's patterns do not fit them — but the surface is now
+#     guarded by `tests/test_event_wording.py`, which checks every event a run owns has a sentence.
 #   - ValueError / KeyError / NotImplementedError guards in models and dataclasses — programmer
 #     errors that surface as a 500, which the screens already turn into one plain sentence.
 

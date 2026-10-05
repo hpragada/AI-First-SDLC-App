@@ -30,6 +30,7 @@ import {
   Table,
   Textarea,
   Tile,
+  writeErrorSentence,
 } from "../../components/ui";
 import { roleLabel } from "../identity/roles";
 import type { A11yConformance, A11yConformanceLevel, A11yConformanceRow } from "../../types";
@@ -233,7 +234,7 @@ function Signing({
         </div>
         {sign.isError && (
           <Banner variant="danger" title="This was not signed">
-            {(sign.error as Error).message}
+            {writeErrorSentence(sign.error)}
           </Banner>
         )}
         <span className="gate-reassure">
@@ -346,7 +347,7 @@ function Draft({ data, projectId }: { data: A11yConformance; projectId: string }
       </div>
       {save.isError && (
         <Banner variant="danger" title="The draft could not be saved">
-          {(save.error as Error).message}
+          {writeErrorSentence(save.error)}
         </Banner>
       )}
     </Panel>
