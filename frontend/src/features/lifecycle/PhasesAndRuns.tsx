@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Banner, Button, Combobox, ConfirmDialog, EmptyState, Field, Modal, Panel, Select, Spinner, Table, WriteError } from "../../components/ui";
 import { engineLabel, runStatusLabel, runStatusTone } from "../../labels";
-import { useRunners } from "../identity/hooks";
+import { useCompanionStatus } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
 import { phaseLabel } from "./phases";
 import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
@@ -17,7 +17,6 @@ export type PhasesRunsView = "online" | "offline" | "no-runs";
 export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   const { selectedProject } = useAuth();
   const projectId = selectedProject?.project_id;
-  const runners = useRunners();
   const workItems = useWorkItems(projectId);
   const catalog = usePhaseCatalog();
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | undefined>();
@@ -31,7 +30,13 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   });
   const trigger = useTriggerPhase(activeWorkItemId);
 
-  const online = Boolean(runners.data?.some((r) => r.online));
+  // Scoped to this project. The old `runners.some(r => r.online)` asked whether ANY machine of
+  // this user's was alive on ANY project, so a companion serving a different project left these
+  // phase buttons enabled while the machine that would actually run them was dead — a trigger
+  // straight into a run nobody claims. `checking` counts as online on purpose: one missed
+  // heartbeat must not take the trigger away mid-session.
+  const companion = useCompanionStatus(projectId);
+  const online = companion.state === "ready" || companion.state === "checking";
   const view: PhasesRunsView =
     forceView ??
     (!online ? "offline" : (runs.data?.length ?? 0) === 0 ? "no-runs" : "online");

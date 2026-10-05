@@ -5,8 +5,9 @@ import { Badge, Banner, Breadcrumb, Button, Card, CardBody, ConfirmDialog, Kv, L
 import { runStatusLabel, runStatusTone } from "../../labels";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
+import { useCompanionGate } from "../identity/CompanionGate";
 import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
-import { isTerminalState } from "../../types";
+import { dispatchUnclaimed, isTerminalState } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { EditWorkItem } from "./EditWorkItem";
 import { ReopenWorkItem } from "./ReopenWorkItem";
@@ -26,6 +27,8 @@ function WorkItemDefectLive() {
   const lifecycle = useLifecycle(id);
   const runs = useRuns({ work_item: id });
   const trigger = useTriggerPhase(id);
+  // The defect's own project — this page is reachable by direct link.
+  const companionGate = useCompanionGate(workItem.data?.project);
   // Fixing a defect dispatches a build to the user's machine. It fired on one click.
   const [fixOpen, setFixOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -52,6 +55,11 @@ function WorkItemDefectLive() {
 
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
+  // A badge must not assert a machine is working when it isn't. "Running on your companion" was
+  // printed from run status alone, so a phase dispatched to a dead machine advertised itself as
+  // running on it — the same false claim the run console was making, one screen along.
+  const strandedRun = Boolean(
+    latestRun && dispatchUnclaimed(latestRun.inputs) && companionGate.blocked);
   // Bugs S.No 140. `=== "done"` meant a CANCELLED defect rendered a red "Open" badge and
   // offered a Trigger Fix button for work nobody intends to do. `closed` is the question these
   // three places are actually asking — "is there anything left to do here" — and `cancelled` is
@@ -104,7 +112,12 @@ function WorkItemDefectLive() {
             <Button variant="secondary" onClick={() => setEditOpen(true)}>
               Edit
             </Button>
-            <Button variant="primary" disabled={trigger.isPending} onClick={() => setFixOpen(true)}>
+            {/* Greyed when there is no machine to run the fix on — see CompanionGate. */}
+            <Button
+              variant="primary"
+              disabled={trigger.isPending || companionGate.blocked}
+              onClick={() => setFixOpen(true)}
+            >
               {trigger.isPending ? <Spinner /> : "Trigger Fix"}
             </Button>
             {/* Bugs S.No 140. The defect page is where "we are not going to fix this" is most
@@ -116,6 +129,10 @@ function WorkItemDefectLive() {
           </span>
         )}
       </div>
+      {/* Under the action row, same reasoning as the task page: the row is a tight strip. */}
+      {companionGate.note && (
+        <div style={{ marginTop: "var(--space-2)" }}>{companionGate.note}</div>
+      )}
 
       <Panel
         flush
@@ -145,10 +162,13 @@ function WorkItemDefectLive() {
           <Panel
             title="Description"
             actions={
-              <Badge variant={cancelled ? "cancelled" : closed ? "done" : running ? "running" : "failed"}>
+              <Badge variant={
+                cancelled ? "cancelled" : closed ? "done"
+                  : strandedRun ? "waiting" : running ? "running" : "failed"}>
                 {cancelled ? "Cancelled"
                   : closed ? "Closed"
-                    : running ? "Fix running on your companion" : "Open"}
+                    : strandedRun ? "Waiting for your machine"
+                      : running ? "Fix running on your companion" : "Open"}
               </Badge>
             }
           >

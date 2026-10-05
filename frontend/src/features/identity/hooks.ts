@@ -40,12 +40,83 @@ export function useResetPassword() {
 // Bugs.xlsx row 13: the interval is configurable so the always-mounted app shell can poll
 // gently (companion pill) while Connect Machine / Phases keep the fast 4s liveness cadence.
 // All callers share the ["runners"] query key, so react-query dedupes to one request per tick.
-export function useRunners(poll = false, intervalMs = 4000) {
+export function useRunners(poll = false, intervalMs: number = 4000) {
   return useQuery({
     queryKey: ["runners"],
     queryFn: api.listRunners,
     refetchInterval: poll ? intervalMs : false,
   });
+}
+
+// ── Is MY machine there, for the project I am looking at? ───────────────────
+// The one place that question is answered. Every surface that shows companion status reads this
+// rather than deriving its own, because the two derivations that existed before both got it
+// wrong in the same way: `runners.some(r => r.online)` asks "is ANY machine of mine alive on ANY
+// project?", so a companion alive on another project kept the status green while the one running
+// your phase was dead — and unlike the other wording defects, that one never corrected itself.
+//
+// `checking` is the middle state, and it exists to close a 2¼-minute blind window. A companion
+// heartbeats every 30s but is only called offline after ONLINE_THRESHOLD (2 min), so a machine
+// that died 90 seconds ago still reads `online`. Rather than shorten that threshold — it also
+// drives dispatch routing and the claim lease, the S.No 84/111/134 machinery — the amber band
+// says "we have stopped hearing from it" at ~40s and leaves the threshold alone.
+export type CompanionState = "ready" | "checking" | "offline" | "unknown";
+
+// Two missed heartbeats (30s each) plus a little slack. Below ONLINE_THRESHOLD by design: this
+// band lives INSIDE "online", warning before the server gives up rather than instead of it.
+const QUIET_AFTER_S = 40;
+
+export interface CompanionStatus {
+  state: CompanionState;
+  machine: string;
+  lastSeen: string | null;
+  /** Has a machine ever connected for this project? Distinguishes "dropped" from "never set
+   *  up" — the difference between "reconnect it" and "connect one". */
+  everConnected: boolean;
+}
+
+// `poll` is passed through rather than hardcoded off, and that is load-bearing: the app shell is
+// the ONE caller that keeps this query refreshing (gently, every 15s — Bugs S.No 12), and every
+// other screen rides its shared ["runners"] cache. A version of this hook that always called
+// useRunners() with polling off would have silently stopped liveness updating everywhere the
+// moment the shell switched over to it.
+export function useCompanionStatus(
+  projectId?: string,
+  { poll = false, intervalMs }: { poll?: boolean; intervalMs?: number } = {},
+): CompanionStatus {
+  const runners = useRunners(poll, intervalMs);
+  // `?? []` on `projects`, not just on `data`: a row that arrives without the array — an older
+  // API, a partial response — must not take down the app shell, which mounts this on every
+  // screen. It reads as "this machine serves no project I can match", which is the safe answer.
+  const rows = (runners.data ?? []).filter((r) =>
+    (r.projects ?? []).some((p) => p.project_id === projectId),
+  );
+  // Freshest first, so `machine`/`lastSeen` describe the row the state came from. A machine
+  // serving several projects is ONE process, so its single liveness is true for all of them;
+  // a label-less enrollment (the default from the web app) is already grouped per project
+  // server-side. Either way, filtering by project then taking the freshest is correct.
+  const best = [...rows].sort((a, b) => Number(b.online) - Number(a.online))[0];
+  const everConnected = rows.some((r) => r.last_seen);
+
+  let state: CompanionState;
+  if (!projectId || (runners.isLoading && !runners.data)) {
+    // Nothing is claimed before the answer arrives. "unknown" never reads as connected on
+    // screen, so the status fails safe exactly as the old pill did while loading.
+    state = "unknown";
+  } else if (!best?.online) {
+    state = "offline";
+  } else if (typeof best.age_s === "number" && best.age_s >= QUIET_AFTER_S) {
+    state = "checking";
+  } else {
+    state = "ready";
+  }
+
+  return {
+    state,
+    machine: best?.machine ?? "",
+    lastSeen: best?.last_seen ?? null,
+    everConnected,
+  };
 }
 
 export function useCreateRunner() {

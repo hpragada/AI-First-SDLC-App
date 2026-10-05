@@ -83,7 +83,8 @@ def list_developer_enrollments(*, tenant_id, developer_id) -> list[dict]:
     **active** enrollments, grouped by machine (`label`) — one `RunnerEnrollment` row exists
     per project a machine is bound to, so a machine connected to several projects surfaces as
     one entry with `projects: [...]`. `online` is derived from the freshest `last_seen` across
-    the group against `ONLINE_THRESHOLD`; a revoked enrollment (disconnected) simply drops out."""
+    the group against `ONLINE_THRESHOLD`; a revoked enrollment (disconnected) simply drops out.
+    `age_s` rides along for the UI's intermediate "checking..." band — see the comment on it."""
     from django.utils import timezone
 
     from apps.runs.models import RunnerEnrollment
@@ -122,9 +123,18 @@ def list_developer_enrollments(*, tenant_id, developer_id) -> list[dict]:
     for key in order:
         g = groups[key]
         last_seen = g["last_seen"]
+        # `age_s` (whole seconds since this machine last called in, None when it never has) is
+        # computed HERE rather than subtracted in the browser, and that is not a convenience.
+        # The UI shows an intermediate "checking..." state once a companion has gone quiet but
+        # is not yet past ONLINE_THRESHOLD, which is a judgement about elapsed time — and a
+        # browser clock off by minutes would paint a healthy companion as dying, or a dead one
+        # as fine. `online` was already immune because the server decides it; this extends the
+        # same immunity to the band inside it. Purely additive: callers that ignore it behave
+        # exactly as before.
         out.append({
             "id": g["id"], "machine": g["machine"],
             "last_seen": last_seen.isoformat() if last_seen else None,
+            "age_s": int((now - last_seen).total_seconds()) if last_seen else None,
             "online": bool(last_seen and (now - last_seen) <= ONLINE_THRESHOLD),
             "projects": g["projects"],
         })

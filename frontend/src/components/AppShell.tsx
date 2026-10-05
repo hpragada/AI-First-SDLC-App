@@ -3,7 +3,8 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext";
 import { useA11yReviewQueue } from "../features/a11y/hooks";
-import { useRunners } from "../features/identity/hooks";
+import { CompanionDropBanner } from "../features/identity/CompanionDropBanner";
+import { useCompanionStatus } from "../features/identity/hooks";
 import { useDashboard } from "../features/observability/hooks";
 import type { ProjectTrack } from "../types";
 import { closeOnTab, cx, FloatingLayer, StatusDot, useDismissable, useFloatingPosition } from "./ui";
@@ -268,10 +269,32 @@ export function AppShell() {
   // Companion pill reflects the real runner status (Bugs.xlsx row 30) — not a hardcoded "Ready".
   // Poll gently here since the shell is mounted on every screen (Bugs.xlsx row 13); the
   // Connect/Phases screens keep the fast 4s cadence via their own useRunners call (shared key).
-  const runners = useRunners(true, 15000);
-  const companionOnline = (runners.data ?? []).some((r) => r.online);
-  const companionPillClass = companionOnline ? "companion-pill--ready" : "companion-pill--offline";
-  const companionPillText = companionOnline ? "Companion: Ready" : "Companion: Offline";
+  //
+  // Scoped to the SELECTED project. It used to ask `runners.some(r => r.online)` — "is any
+  // machine of mine alive anywhere?" — so a companion running another project's work kept this
+  // green while the machine executing the phase you were watching was dead. That was the one
+  // defect in this class with no time limit: it never corrected itself.
+  const companion = useCompanionStatus(selectedProject?.project_id,
+                                       { poll: true, intervalMs: 15000 });
+  const companionPillClass = {
+    ready: "companion-pill--ready",
+    checking: "companion-pill--connecting",
+    offline: "companion-pill--offline",
+    unknown: "companion-pill--offline",
+  }[companion.state];
+  // "unknown" (first load) reads as not-connected on purpose: the pill must never claim a
+  // machine is there before the answer has arrived.
+  const companionPillText = {
+    ready: "Companion: Ready",
+    checking: "Companion: checking…",
+    offline: "Companion: not connected",
+    unknown: "Companion: not connected",
+  }[companion.state];
+  // Only `offline` is actionable. `checking` deliberately offers nothing: one missed heartbeat
+  // is not yet a problem, and a reconnect prompt that appeared and vanished every time a laptop
+  // got briefly busy would train people to ignore it. `unknown` offers nothing either — the
+  // first load has not learned anything yet to act on.
+  const companionNeedsAction = companion.state === "offline" && Boolean(selectedProject);
   // Read from the SELECTED project, not the first membership: switching projects has to
   // change what the sidebar offers, or the greenfield rule would only ever be right once.
   const navContext: NavContext = { isAdmin, track: selectedProject?.track };
@@ -313,6 +336,17 @@ export function AppShell() {
             <StatusDot />
             {companionPillText}
           </span>
+          {/* The status alone leaves the reader stuck: knowing the machine is gone is only
+              useful next to the one thing that fixes it. Said here rather than in the top bar
+              because this column has the room for a second line. "Reconnect" vs "Connect"
+              turns on whether a machine was ever set up for this project — telling somebody to
+              re-connect something they never connected is its own small dead end. */}
+          {companionNeedsAction && (
+            <Link className="sidebar__foot-link" to="/connect">
+              {companion.everConnected ? "Reconnect" : "Connect"} to run phases
+              {selectedProject?.project_name ? ` on ${selectedProject.project_name}` : ""} ↗
+            </Link>
+          )}
         </div>
       </aside>
       <div className="app-main">
@@ -338,10 +372,24 @@ export function AppShell() {
             {projects.length === 0 && <option>{project}</option>}
           </select>
           <span className="u-spacer" />
-          <span className={cx("companion-pill", companionPillClass)} style={{ width: "auto" }}>
-            <StatusDot />
-            {companionPillText}
-          </span>
+          {/* The top bar has no room for a second line, so when there is something to do the
+              pill itself becomes the way to do it rather than a dead label. */}
+          {companionNeedsAction ? (
+            <Link
+              to="/connect"
+              className={cx("companion-pill", companionPillClass)}
+              style={{ width: "auto" }}
+              title={`${companion.everConnected ? "Reconnect" : "Connect"} your machine`}
+            >
+              <StatusDot />
+              {companionPillText}
+            </Link>
+          ) : (
+            <span className={cx("companion-pill", companionPillClass)} style={{ width: "auto" }}>
+              <StatusDot />
+              {companionPillText}
+            </span>
+          )}
           {/* N2: this had a live count and no click handler — the one control saying "something
               needs you" was the one that did not respond. It opens the Needs-me queue, which is
               the dashboard's own list with a link into every item; a second notification centre
@@ -360,6 +408,20 @@ export function AppShell() {
           <AccountMenu name={user} email={userEmail} />
         </header>
         <div className="app-canvas">
+          {/* Above the page, so somebody deep in a work item learns their machine has gone
+              without having to look at the corner of the screen.
+
+              Mounted only while the companion is offline, and that is a requirement of the
+              component rather than a nicety: it polls the project's runs every 4s to find out
+              whether anything is actually stranded, and the app shell is on every screen in the
+              product. Rendered unconditionally it would put that poll everywhere — the
+              background churn S.No 12 asked us to cut. */}
+          {companionNeedsAction && (
+            <CompanionDropBanner
+              projectId={selectedProject?.project_id}
+              everConnected={companion.everConnected}
+            />
+          )}
           <Outlet />
         </div>
       </div>

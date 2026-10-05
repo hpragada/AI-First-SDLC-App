@@ -102,6 +102,7 @@ from orchestration.trigger import (
     ActiveRunError,
     NoCompanionError,
     TriggerError,
+    companion_liveness_for,
     trigger_build,
     trigger_code_intel,
     trigger_onboarding_agent,
@@ -2123,10 +2124,43 @@ class WorkItemViewSet(
         ser = TriggerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         agent_key = ser.validated_data["agent_key"]
+        # Don't dispatch work onto a machine that isn't there. A phase sent to a dead companion
+        # is claimed by nobody: the run flips to RUNNING with `dispatch.status` still "pending"
+        # and sits looking live until the 2h takeover. The screens now grey their trigger
+        # buttons when the companion is offline, but the status they read can be up to
+        # ONLINE_THRESHOLD stale, and a page left open since before the drop knows nothing at
+        # all — so the refusal has to exist somewhere a stale screen cannot bypass.
+        #
+        # Here in the view and not in `trigger_phase`, deliberately. That function is also
+        # called by the onboarding/vision hooks, by the CI server-mode fallback and by most of
+        # the test suite — which enrolls companions that never check in — so guarding inside it
+        # would refuse all of them and break its documented "trigger first, start your companion
+        # second" path. This is the HUMAN boundary (it already carries the only other
+        # human-only check, the membership one), which is where a guard about a human's own
+        # machine belongs.
+        #
+        # Only "stale" is refused — a machine that WAS there and stopped answering, which is the
+        # reported bug. The other two no-machine cases are deliberate flows and must keep
+        # working: "never" is onboarding's mint-token-then-trigger-then-connect path, and "none"
+        # resolves to a legitimate server-mode run.
+        #
+        # Raised INSIDE the try so it travels the `except TriggerError` path already below —
+        # which files it as a non-field error (Screen Words group 5). Raised above the try it
+        # would escape as a 500, since `NoCompanionError` is only handled in there.
         try:
             # Actor = the session user when present (routes the phase to *their* companion
             # enrollment), else the pre-auth/runner `user_id` body param (T5).
             triggered_by = resolve_actor(request, ser.validated_data.get("user_id"))
+            # Resolved BEFORE the guard, and the guard reads it: on the pre-auth path the actor
+            # is the body's `user_id`, not the session user, so asking about the session user
+            # would check a different person's machine than the one the dispatch routes to.
+            if companion_liveness_for(
+                self.tenant_id, str(work_item.project_id), triggered_by,
+            ) == "stale":
+                raise NoCompanionError(
+                    "Your machine isn't connected, so this can't start. Reconnect your machine "
+                    "and try again."
+                )
             if catalog_rides_build(agent_key):
                 result = trigger_build(
                     tenant_id=self.tenant_id,

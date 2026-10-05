@@ -116,10 +116,31 @@ export interface Run {
   status: string;
   cost_usd: string | null;
   temporal_workflow_id: string;
+  // Both are served whole by RunSerializer and narrowed by the helpers below, never read
+  // field-by-field at a call site.
+  inputs?: unknown;
   outputs?: unknown;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
+}
+
+/** Was this run handed to a machine that never picked it up?
+ *
+ *  The one place `Run.inputs.dispatch` is narrowed, for the same reason `workerStalled` exists:
+ *  one shape, one reader.
+ *
+ *  Read this rather than the run's status, which cannot answer the question. Dispatching sets a
+ *  run to RUNNING while leaving `dispatch.status` at "pending", so by status alone a phase sent
+ *  to a dead companion is indistinguishable from one being actively worked on — which is exactly
+ *  how a stranded run came to render a live console, spinner and all, until the 2h takeover.
+ *
+ *  "Pending" on its own is not a fault: a healthy companion claims within ~5s. It only means
+ *  something is wrong alongside a companion that has stopped answering.
+ */
+export function dispatchUnclaimed(inputs: unknown): boolean {
+  return (inputs as { dispatch?: { status?: string } } | null | undefined)
+    ?.dispatch?.status === "pending";
 }
 
 /** Written onto a run while nobody is serving the code version it is pinned to (S.No 246), and
@@ -458,6 +479,12 @@ export interface Runner {
   id: string;
   machine: string;
   last_seen: string | null;
+  // Whole seconds since this machine last called in; null when it never has. Computed on the
+  // SERVER (apps/runs/enrollment.py) so a skewed browser clock cannot move it — the
+  // "checking…" band in useCompanionStatus is a judgement about elapsed time, and subtracting
+  // Date.now() from last_seen would paint a healthy machine as dying on a device whose clock
+  // is wrong. Optional: an API too old to send it simply produces no amber band.
+  age_s?: number | null;
   online: boolean;
   projects: RunnerProject[];
 }

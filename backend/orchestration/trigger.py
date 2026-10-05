@@ -162,6 +162,53 @@ def _resolve_enrollment(tenant_id, project_id, user_id):
     return candidates[0]
 
 
+def companion_liveness_for(tenant_id, project_id, user_id) -> str:
+    """Is the companion this user's phase would be dispatched TO alive? One of:
+
+    - `"online"` — it called in within `ONLINE_THRESHOLD`; dispatch will be claimed.
+    - `"stale"`  — it connected at some point and has since gone QUIET. This is the only
+                   mistake of the four: work dispatched now is claimed by nobody, and the run
+                   flips to RUNNING with `dispatch.status` still "pending", looking live until
+                   the 2h takeover (S.No 89).
+    - `"never"`  — an enrollment exists but nothing has ever held that token. NOT a mistake:
+                   `_resolve_enrollment`'s selection rule supports this on purpose (its case 3
+                   — "the user triggers before starting the companion; the dispatch waits for
+                   it"), which is how onboarding works. Mint a token, trigger, then start the
+                   machine.
+    - `"none"`   — no enrollment for this user+project at all, so `trigger_phase` resolves to a
+                   SERVER-mode run. Also legitimate: CI, tests, a project nobody has connected
+                   a machine to.
+
+    All four are kept apart because only `"stale"` may be refused, and each collapse breaks
+    something real: `"never"` into `"stale"` blocks onboarding's trigger-then-connect flow,
+    `"none"` into `"stale"` refuses the server fallback, and `"stale"` into `"online"` is the
+    bug being fixed. The distinction between the two "no machine" cases is the whole reason this
+    returns a word rather than a boolean.
+
+    Deliberately built on `_resolve_enrollment` and `ONLINE_THRESHOLD` rather than its own query,
+    so it answers about the *same* enrollment the dispatch will pick and against the *same*
+    threshold the status pill shows. A second implementation here could disagree with either, and
+    a guard that refuses work the pill calls fine (or vice versa) is worse than no guard.
+    """
+    from django.utils import timezone
+
+    from apps.runs.enrollment import ONLINE_THRESHOLD
+    from apps.tenancy.context import tenant_context
+
+    # Inside the tenant's context, like every other enrollment lookup here: forced RLS hides
+    # every row from a query with no tenant context, which would read as "nothing is online"
+    # however many companions were connected (the bug fixed in `trigger_onboarding_agent`).
+    with tenant_context(str(tenant_id)):
+        enrollment = _resolve_enrollment(tenant_id, project_id, user_id)
+    if enrollment is None:
+        return "none"
+    if not enrollment.last_seen:
+        return "never"
+    if (timezone.now() - enrollment.last_seen) <= ONLINE_THRESHOLD:
+        return "online"
+    return "stale"
+
+
 def _resolve_work_item_repo(
     *, tenant_id, project_id, work_item, repo=None, base=None
 ) -> tuple[str | None, str]:

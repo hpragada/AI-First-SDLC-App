@@ -173,3 +173,53 @@ the same rule, because they are shown a few pixels apart.
 
 No run id appears on S-19 or on the offline-takeover screen. The work item's key and the phase name
 the run in words; the id is in the address bar for support.
+
+### S-05 / S-06 / S-18 / S-19: "is my machine there?" has exactly one answer (2026-10-05)
+
+**One hook, `useCompanionStatus(projectId)` in `features/identity/hooks.ts`.** Every surface that
+shows or acts on companion status reads it — the status pill in both places, Phases & Runs' trigger
+gating, the three per-item triggers (S-15/16/17 via `CompanionGate`), the run console's stranded
+banner, and the drop banner in the shell. Nothing derives this from `useRunners` again.
+
+**Why it is a hook and not two lines at each call site.** It used to be two lines, in two places,
+and both were wrong in the same way: `runners.some(r => r.online)` asks "is any machine of mine
+alive on **any** project?", so a companion serving another project kept the pill green — and kept
+S-18's phase buttons enabled — while the machine running the phase on screen was dead. Scoping has
+to be decided once. (Bugs S.No 306.)
+
+**Three states, not two.** `ready` · `checking…` · `offline`, plus `unknown` before the first answer
+arrives, which renders as not-connected so nothing ever claims a machine is there before asking.
+The amber `checking` band exists because a companion heartbeats every 30s but the platform only
+calls it gone after `ONLINE_THRESHOLD` (2 min), leaving a 2¼-minute window in which the screen was
+confidently wrong. **Do not close that window by shortening `ONLINE_THRESHOLD`** — the same constant
+picks which enrollment a dispatch routes to and how long a claim lease survives (S.No 84, 111, 134).
+The band buys the warning without touching any of it. (Bugs S.No 307.)
+
+**The elapsed time comes from the server** (`age_s`, `apps/runs/enrollment.py`), not from
+subtracting `last_seen` in the browser: the band is a judgement about time, and a wrong device clock
+would otherwise paint a healthy machine as dying.
+
+### S-19 and S-15/16/17: read the dispatch, never the run status, to ask "has a machine got this?"
+
+`dispatch_phase_core` sets a run to **RUNNING** at the moment it is sent out, while leaving
+`inputs.dispatch.status` at `"pending"` until a machine claims it. So by status alone a stranded run
+and a run being actively worked on are indistinguishable — which is how a phase sent to a dead
+machine came to render a live console, spinner and all, until the 2h takeover. Use
+`dispatchUnclaimed(run.inputs)` from `types.ts`; it is the one place that shape is narrowed, for the
+same reason `workerStalled` is. (Bugs S.No 308, 310.)
+
+Stranded = unclaimed **and** the companion for the **run's own** project is offline. Both halves are
+required: unclaimed with a live machine is a run about to start, and offline with a *claimed*
+dispatch is a machine working away that has merely gone quiet — telling that reader to reconnect
+would discard work in progress.
+
+### Starting work is refused on the server too, not only on the screen
+
+The screens grey their triggers, but the status a page holds can be up to `ONLINE_THRESHOLD` old and
+a page open since before the drop knows nothing at all. `POST /work-items/{id}/trigger/` therefore
+calls `companion_liveness_for` and refuses a **`"stale"`** companion with a client-safe sentence
+(reusing `NoCompanionError`, already mapped to a non-field error). It refuses only that one of the
+four states: `"never"` is onboarding's mint-token-then-trigger-then-connect path and `"none"` is a
+legitimate server-mode run, and collapsing either into the refusal breaks a real journey. The guard
+lives in the **view**, not in `trigger_phase`, which is also called by the onboarding/vision hooks,
+CI, and most of the test suite. (Bugs S.No 309.)

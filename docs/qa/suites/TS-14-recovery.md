@@ -694,3 +694,90 @@ consequences you must plan around:
 - Bugs S.No 303. Ten places across these three screens. S.No 248 fixed this on the rest of the
   product; these were missed, and the distinction in step 5 is the reason that fix is not simply
   "replace the message" — a refusal in words is the most useful thing a screen can show.
+
+---
+
+### TC-219 · Companion status answers about the project you are in, and says what to do
+
+**Why this case exists.** The status used to ask "is any machine of mine alive, on any project?" A
+machine connected for a second project kept the badge green while the one running your phase was
+dead. **This is the one defect in the group that never corrected itself with time**, so it is the
+case that must not be skipped — and it needs two projects to show up at all, which is why it was
+missed.
+
+**Setup**
+- One person, **two projects**, a companion connected for each. (Connect Machine, once per project.)
+- Something a phase can run on in the first project.
+
+**Steps**
+1. With both machines running, read the status in the **top bar** and at the foot of the
+   **sidebar**.
+2. Stop **only the first project's** companion. Leave the second running. Wait about a minute,
+   watching the status.
+3. Keep waiting until it settles, then read the status and the line under it.
+4. Switch the project selector to the **second** project and read the status again.
+5. Switch back to the first, and start its companion again.
+
+**Expected**
+- Step 1: both read **"Companion: Ready"** in green.
+- Step 2: within about **40 seconds** it turns amber and reads **"Companion: checking…"**. This is a
+  warning, not a fault — nothing is disabled.
+- Step 3: it turns red and reads **"Companion: not connected"**, and under the sidebar badge a link
+  reads **"Reconnect to run phases on <the first project's name>"**. Clicking either the badge in
+  the top bar or that link opens Connect Machine.
+- **Step 4 is the point of this case: the status turns green again**, because that project's machine
+  really is connected. The same data, two honest answers.
+- Step 5: back to green within about 15 seconds.
+
+**Pass / Fail**
+- PASS if the status follows the project in the selector, including green at step 4 and red at
+  step 3 **at the same moment**.
+- FAIL if the first project ever reads Ready while its machine is stopped. That is the reported bug.
+- FAIL if the amber state never appears, or if it appears while the machine is healthy.
+
+**Notes**
+- Bugs S.No 306 (the project scoping) and S.No 307 (the amber state). The two-minute rule the
+  platform uses to declare a machine gone was deliberately **not** changed — it also decides which
+  machine a phase is sent to and how long a machine holds claimed work (S.No 84, 111, 134). The
+  amber band is what buys the earlier warning without touching any of that.
+- Step 2's timing is measured from the server, not your computer's clock, so a device with the wrong
+  time still shows the right colour.
+
+---
+
+### TC-220 · A dropped machine interrupts you — but only when something is actually stuck
+
+**Why this case exists.** With the badge corrected you could still work for a long time without
+looking at it. The opposite failure matters just as much: a message that fires every time a laptop
+sleeps is one nobody reads by the week it matters.
+
+**Setup**
+- A project with a companion that has connected before.
+
+**Steps**
+1. With **nothing running**, stop the companion. Wait two minutes and move around the app.
+2. Start the companion, trigger a phase, and stop the companion again **before** it picks the work
+   up.
+3. Move to a different screen — Work Items, Gates, anywhere.
+4. Press **Dismiss**, then navigate away and back.
+5. Start the companion again, let the phase run, and look once more.
+
+**Expected**
+- **Step 1 shows nothing.** The badge goes red, and that is all — nothing was waiting, so nothing
+  was wrong.
+- Step 2–3: a red message appears across the top of **whatever screen you are on**, reading **"Your
+  machine stopped responding"** and naming the phase: "<Phase> hasn't started, and it won't until
+  your machine is back", with **Reconnect your machine** and **Open the run** links.
+- Step 4: it goes and stays gone while you keep working.
+- Step 5: nothing reappears.
+
+**Pass / Fail**
+- PASS if it appears only when a phase is genuinely waiting, follows you between screens, and
+  dismisses.
+- **FAIL if step 1 produces a message.** A closed laptop with no work pending is not a problem, and
+  warning about it is how a warning stops being read.
+
+**Notes**
+- Bugs S.No 311. The message names the phase, never the run's identifier — the standing rule.
+- It also only looks for stuck work while your machine is actually missing, so it adds no background
+  checking to ordinary use (the concern behind S.No 12).

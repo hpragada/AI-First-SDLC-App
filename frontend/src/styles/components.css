@@ -441,6 +441,18 @@ button.avatar { border: 0; cursor: pointer; padding: 0; }
 .topbar .companion-pill--ready      { color: var(--success); }
 .topbar .companion-pill--offline    { color: var(--danger); }
 .topbar .companion-pill--connecting { color: var(--warning); }
+/* The pill becomes a link when the machine needs reconnecting; it must not pick up the
+   underlined default-link look that would make a status badge read as body copy. */
+a.companion-pill { text-decoration: none; cursor: pointer; }
+a.companion-pill:hover { filter: brightness(1.08); }
+/* The "Reconnect to run phases on X" line under the sidebar pill. Readable on the dark
+   sidebar without competing with the pill itself for attention. */
+.sidebar__foot-link {
+  display: block; margin-top: var(--space-2);
+  font-size: var(--fs-xs); line-height: 1.35;
+  color: rgba(255,255,255,.78); text-decoration: underline;
+}
+.sidebar__foot-link:hover { color: #fff; }
 
 /* --- main column + top bar --- */
 .app-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }

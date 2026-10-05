@@ -38,6 +38,15 @@ const card = (over: Record<string, unknown> = {}) => ({
 
 const triggered: Array<{ url: string; body: unknown }> = [];
 
+/** A connected machine for project p1, which every trigger on these screens now requires: the
+ *  buttons grey themselves when the companion for the work item's project is offline, so a stub
+ *  without this describes a machine-less workspace where nothing can start. `projects` is what
+ *  makes it count — status is scoped to the project on screen. */
+const CONNECTED_MACHINE = [{
+  id: "r1", machine: "Dev laptop", online: true, age_s: 3, last_seen: "2026-10-05T09:00:00Z",
+  projects: [{ project_id: "p1", project_name: "Platform" }],
+}];
+
 /** Reads resolve by URL substring in insertion order, so a specific key like "/lifecycle" must be
  *  listed BEFORE "/work-items/". Writes are recorded and answered 200. */
 function stub(routes: Record<string, unknown>) {
@@ -54,6 +63,9 @@ function stub(routes: Record<string, unknown>) {
       return ok({ ok: true });
     }
     if (u.includes("/auth/me")) return ok(me);
+    // Answered before the caller's routes only as a DEFAULT — a test that passes its own
+    // "/runners" wins, which is how the offline cases below say so.
+    if (u.includes("/runners") && !("/runners" in routes)) return ok(CONNECTED_MACHINE);
     for (const [needle, value] of Object.entries(routes)) {
       if (u.includes(needle)) return ok(value);
     }
@@ -78,7 +90,6 @@ afterEach(() => {
 // ── Phases & Runs: the first-ever trigger used to fire on one click ──
 describe("Phases & Runs", () => {
   const PHASES_STUB = {
-    "/runners": [{ id: "r1", online: true }],
     "/phases": { plan: [], build: [], remediation: [] },
     "/runs": [],
     "/work-items": [card({ id: "wi-1", key: "WI-159", title: "Login times out" })],

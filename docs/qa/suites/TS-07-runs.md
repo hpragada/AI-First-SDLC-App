@@ -1252,3 +1252,81 @@ shared epic must be prepared sequentially** — never in parallel to save time.
 **Notes**
 - Bugs S.No 304. The run's id is still in the **address bar**, which is where support takes it from.
 - Step 2 matters: a second copy of the id used to be a tooltip, where it survived the first pass.
+
+---
+
+### TC-713 · A phase sent to a machine that isn't connected says so, instead of looking busy
+
+**Why this case exists.** Dispatching a phase marks the run "running" immediately, while separately
+recording that no machine has picked it up. The console used to read only the first of those, so a
+run nobody had claimed showed a live progress panel — for up to the two hours until the timeout
+parked it. Status alone cannot tell the two apart; this case checks the screen no longer tries to.
+
+**Setup**
+- A project with a companion that has connected at least once.
+- **Stop the companion**, and wait until the status in the top bar reads "Companion: not connected"
+  (up to about a minute — it passes through amber "checking…" first).
+
+**Steps**
+1. Trigger any phase for a work item in that project. If the trigger button is greyed, that is
+   TC-714 working — use a run already dispatched before you stopped the machine.
+2. Open that run's console.
+3. Start the companion again and watch the same console.
+4. Separately, open a run that the companion **had already picked up** before it was stopped.
+
+**Expected**
+- At step 2 a red box reads **"Your machine isn't connected — this hasn't started"**, with
+  "Nothing is lost. Reconnect your machine and it will pick this up on its own." and a
+  **Reconnect your machine** link to Connect Machine.
+- The old line **"Waiting to start. This begins on its own — nothing to do."** does **not** appear
+  while the machine is missing.
+- At step 3 the red box disappears on its own, with nothing to dismiss.
+- At step 4 there is **no** such box: that machine claimed the work and is doing it, it has just
+  gone quiet. A companion only reports at the end of a phase.
+
+**Pass / Fail**
+- PASS if an unclaimed run on a missing machine says so, and a claimed one says nothing.
+- FAIL if a stranded run shows as plainly running, or if a run already being worked on is described
+  as not started — that one would invite somebody to discard work in progress.
+
+**Notes**
+- Bugs S.No 308. The wording is the banner that had existed in the internal design catalogue since
+  S-19 was built; nothing had ever connected it to live data.
+
+---
+
+### TC-714 · You cannot start work on a machine that isn't connected
+
+**Why this case exists.** Phases & Runs already refused, but three other screens did not and nor did
+the server, so the same action was blocked in one place and accepted in three — each sending work
+nowhere.
+
+**Setup**
+- As TC-713: a companion that has connected before, now stopped, and the status reading
+  "Companion: not connected".
+
+**Steps**
+1. Open a **task** work item and look at **Trigger phase**.
+2. Open a **defect** work item and look at **Trigger Fix**.
+3. Open a story's **Test Cases** and look at **Generate script** on a case that is not automated.
+4. Open **Phases & Runs** and look at the phase buttons.
+5. Start the companion again and repeat steps 1–3.
+
+**Expected**
+- At steps 1–3 each button is **greyed**, with a line beside it reading **"Your machine isn't
+  connected, so this can't start yet."** and a **Reconnect your machine** link.
+- If no machine was ever connected for this project, that line instead reads **"You haven't
+  connected a machine yet"** with **Connect your machine** — never "re-connect".
+- Step 4 behaves as it already did.
+- At step 5 all three work normally again, with no leftover message.
+
+**Pass / Fail**
+- PASS if all four screens agree, and all of them recover.
+- FAIL if any one of them still offers to start work, and equally if a button stays greyed after the
+  machine is back — a guard that blocks healthy work is not a fix.
+
+**Notes**
+- Bugs S.No 309. The server refuses this too, which a screen cannot demonstrate: the status a page
+  holds can be up to two minutes old, and a page left open since before the machine dropped knows
+  nothing. Starting a phase **before** starting your machine still works on purpose — the dispatch
+  waits for it, which is how onboarding is meant to go.

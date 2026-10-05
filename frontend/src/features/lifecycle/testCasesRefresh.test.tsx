@@ -41,6 +41,12 @@ function stub(listFor: (read: number) => unknown[]) {
     }
     if (u.includes("/auth/me")) return ok(200, me);
     if (u.includes("/test-cases/")) return ok(200, listFor(listReads++));
+    // Generating a script runs on the user's machine, so the button is greyed when none is
+    // connected. The catch-all [] below made this screen look machine-less.
+    if (u.includes("/runners")) {
+      return ok(200, [{ id: "r1", online: true, age_s: 3,
+                        projects: [{ project_id: "p1", project_name: "Checkout" }] }]);
+    }
     return ok(200, []);
   }));
 }

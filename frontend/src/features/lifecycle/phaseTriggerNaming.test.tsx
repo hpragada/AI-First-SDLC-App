@@ -37,7 +37,9 @@ function stub(items: unknown[] = [workItem()]) {
     if (u.includes("/phases")) return ok({ plan: [], build: [], remediation: [] });
     // `online` is the flag the screen reads; without it the whole panel renders its offline
     // state, which has no work-item line at all.
-    if (u.includes("/runners")) return ok([{ id: "r1", online: true }]);
+    // Scoped companion status needs the row to name its project (see hooks.ts).
+    if (u.includes("/runners")) return ok([{ id: "r1", online: true, age_s: 3,
+      projects: [{ project_id: "p1", project_name: "SpendLog" }] }]);
     return ok([]);
   }));
 }

@@ -21,12 +21,14 @@ import { EditWorkItem } from "./EditWorkItem";
 import { ReopenWorkItem } from "./ReopenWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
+import { useCompanionGate } from "../identity/CompanionGate";
 import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 import { artifactLink, artifactsForWorkItem, gateLink } from "../../links";
 import { useArtifactPreview } from "../observability/hooks";
 import { repoRoleLabel, workItemTypeLabel } from "../../labels";
 import { roleLabel } from "../identity/roles";
 import { useRepositories } from "../setup/hooks";
+import { dispatchUnclaimed } from "../../types";
 import type { WorkItemCard } from "../../types";
 
 // ── The test case itself, read from the artifact the work item points at ────
@@ -70,6 +72,9 @@ function WorkItemTaskLive() {
   const runs = useRuns({ work_item: id });
   const decideApproval = useDecideApproval();
   const trigger = useTriggerPhase(id);
+  // Scoped to the work item's own project, not the project switcher: this page is reachable
+  // by direct link from anywhere.
+  const companionGate = useCompanionGate(workItem.data?.project);
   // Confirm before re-triggering implementation when a run already exists (Bugs S.No 77):
   // in progress → blocked; already run → restart & replace this phase's artifacts.
   // "first" is the case that used to start a build on one click with nothing asked. "active" is a
@@ -112,6 +117,11 @@ function WorkItemTaskLive() {
   const pendingGate = approvals.data?.[0];
   const latestRun = runs.data?.[0];
   const running = latestRun?.status === "running";
+  // A badge must not assert a machine is working when it isn't. "Running on your companion" was
+  // printed from run status alone, so a phase dispatched to a dead machine advertised itself as
+  // running on it — the same false claim the run console was making, one screen along.
+  const strandedRun = Boolean(
+    latestRun && dispatchUnclaimed(latestRun.inputs) && companionGate.blocked);
   const done = workItem.data.state === "done";
   // Bugs S.No 140. Kept separate from `done`: they are different facts and the screen says
   // different things about each.
@@ -182,7 +192,14 @@ function WorkItemTaskLive() {
               <Button variant="secondary" onClick={() => setEditOpen(true)}>
                 Edit
               </Button>
-              <Button variant="primary" disabled={trigger.isPending} onClick={handleImplTrigger}>
+              {/* Greyed when there is no machine to build on — this used to dispatch into a
+                  run nobody could claim. The reason sits beside the button, not behind a
+                  click. */}
+              <Button
+                variant="primary"
+                disabled={trigger.isPending || companionGate.blocked}
+                onClick={handleImplTrigger}
+              >
                 {trigger.isPending ? <Spinner /> : "Trigger phase"}
               </Button>
               {!done && (
@@ -194,6 +211,11 @@ function WorkItemTaskLive() {
           )}
         </span>
       </div>
+      {/* Under the action row rather than inside it: the row is a tight horizontal strip of
+          buttons, and a sentence in there would push them out of line. */}
+      {!cancelled && companionGate.note && (
+        <div style={{ marginTop: "var(--space-2)" }}>{companionGate.note}</div>
+      )}
 
       <Panel
         flush
@@ -228,8 +250,12 @@ function WorkItemTaskLive() {
             <Panel
               title="Latest run"
               actions={
-                <Badge variant={running ? "running" : latestRun.status === "failed" ? "failed" : "done"}>
-                  {running ? "Running on your companion" : statusLabel(latestRun.status)}
+                <Badge variant={
+                  strandedRun ? "waiting"
+                    : running ? "running"
+                      : latestRun.status === "failed" ? "failed" : "done"}>
+                  {strandedRun ? "Waiting for your machine"
+                    : running ? "Running on your companion" : statusLabel(latestRun.status)}
                 </Badge>
               }
             >

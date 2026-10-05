@@ -21,6 +21,7 @@ import {
   Textarea,
 } from "../../components/ui";
 import type { AutomationStatus, TestCase } from "../../types";
+import { useCompanionGate } from "../identity/CompanionGate";
 import { useCreateTestCase, useTestCases, useTriggerPhase } from "./hooks";
 
 // The Test Automation phase key — triggering it on a test_case WI generates its script.
@@ -63,8 +64,14 @@ const STATUS_BADGE: Record<AutomationStatus, { variant: "neutral" | "running" | 
   ready: { variant: "done", label: "Script ready" },
 };
 
-function GenerateCell({ tc, storyId }: { tc: TestCase; storyId: string | undefined }) {
+function GenerateCell(
+  { tc, storyId, projectId }:
+  { tc: TestCase; storyId: string | undefined; projectId: string | undefined },
+) {
   const trigger = useTriggerPhase(tc.id);
+  // A test case carries no project of its own; it is a child of the story on screen, so the
+  // selected project is the right one to ask about.
+  const companionGate = useCompanionGate(projectId);
   const qc = useQueryClient();
   // Generating a script is a phase run on the user's machine, and it fired on one click.
   const [asking, setAsking] = useState(false);
@@ -86,11 +93,14 @@ function GenerateCell({ tc, storyId }: { tc: TestCase; storyId: string | undefin
       <Button
         variant="ghost"
         size="sm"
-        disabled={trigger.isPending}
+        disabled={trigger.isPending || companionGate.blocked}
         onClick={() => setAsking(true)}
       >
         {trigger.isPending ? "Starting…" : "Generate script"}
       </Button>
+      {/* This cell was already built as a column with a slot under the button for exactly this
+          kind of message, so the reason needs no new layout. */}
+      {companionGate.note}
       {asking && (
         <ConfirmDialog
           title="Generate the test script?"
@@ -307,7 +317,7 @@ export function TestCases({ forceView }: { forceView?: TestCasesView }) {
               <Badge variant={STATUS_BADGE[tc.automation_status].variant} key="a">
                 {STATUS_BADGE[tc.automation_status].label}
               </Badge>,
-              <GenerateCell tc={tc} storyId={storyId} key="g" />,
+              <GenerateCell tc={tc} storyId={storyId} projectId={projectId} key="g" />,
             ])}
           />
         </Panel>

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, ConfirmDialog, Console, Disclosure, Panel, Spinner, WriteError } from "../../components/ui";
 import { engineLabel, readsAsSentence, runStatusLabel } from "../../labels";
-import { isTerminalState, workerStalled, type RunEvent } from "../../types";
+import { dispatchUnclaimed, isTerminalState, workerStalled, type RunEvent } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { phaseLabel } from "./phases";
 import {
@@ -15,6 +15,7 @@ import {
   useTriggerPhase,
   useWorkItem,
 } from "./hooks";
+import { useCompanionStatus } from "../identity/hooks";
 import { clarificationLink, recoveryLink, runLink, transcriptLink } from "../../links";
 
 // S-19 view states: dispatched · running · needs-answer · awaiting-gate · completed ·
@@ -86,6 +87,10 @@ function RunConsoleLive() {
   const events = useRunEvents(id);
   const workItem = useWorkItem(run.data?.work_item);
   const clarifications = useClarifications({ run: id, status: "pending" });
+  // Up here with the other hooks, not beside the banner that uses it: everything below the
+  // early "run not found" return runs conditionally, and a hook called there changes hook order
+  // between renders.
+  const runCompanion = useCompanionStatus(workItem.data?.project);
   const retry = useTriggerPhase(run.data?.work_item);
   const [cancelOpen, setCancelOpen] = useState(false);
   const resume = useResumeRun(id);
@@ -145,6 +150,16 @@ function RunConsoleLive() {
               : run.data.status === "paused"
                 ? "paused"
                 : "failed";
+
+  // "Dispatched to a machine that isn't there." Both halves are needed and neither is enough:
+  // an unclaimed dispatch with a live companion is simply a run about to start (the claim poll
+  // is 5s), and an offline companion with a CLAIMED dispatch is a machine working away that has
+  // merely gone quiet — telling that reader to reconnect would be wrong, and it would throw away
+  // work in progress.
+  //
+  // `runCompanion` is scoped to the RUN's own project, not the one in the switcher: somebody can
+  // open a run from anywhere, and the question is about the machine that was given this phase.
+  const stranded = dispatchUnclaimed(run.data.inputs) && runCompanion.state === "offline";
 
   const lines = (events.data ?? []).map(eventLine);
   // Surface a concrete failure reason (Bugs.xlsx row 21 v.1) — the error captured on the run's
@@ -294,9 +309,25 @@ function RunConsoleLive() {
           </span>
         }
       >
+        {/* A run nobody's machine ever picked up. Keyed off `dispatch.status`, NOT the run
+            status, and that is the whole finding: dispatching sets the run to RUNNING while
+            leaving `dispatch.status` at "pending", so a phase sent to a dead companion rendered
+            the *running* view — a live-looking console, spinner and all — for up to the two
+            hours until takeover. It never even reached the "waiting to start" line below.
+
+            Wording lifted from RunConsoleGallery, where this banner has existed as an approved
+            design all along while nothing wired it to live data. Shipping that copy rather than
+            a second draft of it. */}
+        {stranded && (
+          <Banner variant="danger" title="Your machine isn't connected — this hasn't started">
+            Nothing is lost. Reconnect your machine and it will pick this up on its own.{" "}
+            <Link to="/connect">Reconnect your machine ↗</Link>
+          </Banner>
+        )}
         {/* "It will start as soon as your companion claims it" described our machinery competing
-            for work. What the reader needs is that it begins on its own. */}
-        {view === "dispatched" && (
+            for work. What the reader needs is that it begins on its own — true only while there
+            is a machine there to do the beginning, hence the `!stranded`. */}
+        {view === "dispatched" && !stranded && (
           <Banner variant="info">Waiting to start. This begins on its own — nothing to do.</Banner>
         )}
         {view === "needs-answer" && (
