@@ -1245,3 +1245,46 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
 - One **known and deliberate** exception: an artifact with no body of its own that can only be
   previewed through the run that produced it may still say "Nothing to preview". Checking that
   would cost a database query per row on a registry that is not paginated. Do not raise it.
+
+---
+
+### TC-251 · A wireframe shows, downloads and exports the design — never a storage path
+
+| Field | Value |
+|---|---|
+| Suite | TS-10 Artifacts & Publish |
+| Type | Functional |
+| Priority | **Critical** |
+| Screen | `/artifacts`, `/artifacts/:id` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Preconditions**
+- A project whose **UX Design** phase has run, so the registry holds at least one **wireframe** row.
+  A wireframe keeps one document per screen state — default, error, empty — rather than a single
+  document.
+
+**Steps**
+1. Open the wireframe's Preview. Read the body, and switch between its states.
+2. Press **Download** and **open the saved file**.
+3. If its gate has been approved, press **Export**, and read the preview of what will be published
+   before confirming.
+
+**Expected**
+- Every one of those three shows the **design**.
+- None of them shows a block of text listing state names with paths beside them — anything of the
+  shape `t/<something>/<something>.html`, or a line labelled **S3 key**.
+- The state switcher still offers every state, and each one opens its own document.
+
+**Pass / Fail**
+- PASS if the screen, the saved file and what Export is about to publish all contain the design.
+- FAIL on any internal path appearing in any of the three — and stop before confirming the Export.
+
+**Notes**
+- Bugs S.No 300. All three read the document through one shared step, so a single mistake reached
+  all three at once: the list of pointers at the state documents was being rendered **as** the body,
+  which also stopped the real documents from ever being opened.
+- Critical because of step 3: publish pushes that body into the client's own Confluence. An internal
+  storage path in a client's documentation is the outcome non-negotiable #5 exists to prevent.
+- A wireframe row that **does** carry a document of its own was never affected, which is why this
+  went unseen — ask a developer for a states-only row if the project has none.

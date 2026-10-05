@@ -25,7 +25,6 @@ from apps.ledger.models import Event
 from apps.projects.models import Project
 from apps.registry.models import Artifact
 from apps.tenancy.models import Membership, Tenant, User
-from storage import InMemoryObjectStore
 
 
 @pytest.fixture
@@ -33,24 +32,15 @@ def client():
     return APIClient()
 
 
-@pytest.fixture(autouse=True)
-def store(monkeypatch):
-    """Keep these tests OFF the real object store.
+@pytest.fixture
+def store(object_store):
+    """The suite-wide in-memory store from `conftest.py`, under this file's older name.
 
-    `s3_from_settings()` is not a local stub: with `S3_ENDPOINT_URL` empty it builds a live AWS S3
-    client from the credentials in `.env`, and the bucket it writes to is the team's own. Tests that
-    stage a body through it are writing real objects to shared storage — and when AWS is slow or
-    unreachable they fail for reasons that have nothing to do with the code under test, which is
-    where the intermittent `EndpointConnectionError`s in this area come from.
-
-    So the download path reads through an in-memory store instead. The endpoint resolves its store
-    via `preview._object_store`, which is the one seam both halves go through.
+    This file used to patch the store itself, because it was the first to notice that staging a body
+    writes a real object into the team's live AWS bucket. That guard now covers every test in the
+    suite (`conftest.object_store`), so there is nothing local left to do but name it.
     """
-    from integrations import preview
-
-    fake = InMemoryObjectStore()
-    monkeypatch.setattr(preview, "_object_store", lambda injected: injected or fake)
-    return fake
+    return object_store
 
 
 @pytest.fixture
@@ -156,6 +146,30 @@ def test_an_inline_draft_body_downloads(client, tenant, project, member, store):
     resp = client.get(_url(art.id))
 
     assert resp.status_code == 200 and resp.content == b"# Draft PRD"
+
+
+def test_a_wireframe_with_bodies_only_per_state_downloads(client, tenant, project, member, store):
+    """A wireframe registers one row with a body per SCREEN STATE in `external_ref.states` and no
+    `s3_key` of its own. The predicate reads that branch, so the row offers Download — and the file
+    must then be a real body, not the empty string the bodyless case is refused for."""
+    key = f"t/{tenant.id}/wire-default.md"
+    store.put(key, "# Login — default state\n\nEmail, password, Sign in.".encode())
+    art = _artifact(
+        tenant, project, type="wireframe", phase="ux_design", title="Wireframe — Login",
+        version=1, s3_key="",
+        external_ref={"states": [{"name": "default", "s3_key": key},
+                                 {"name": "error", "s3_key": f"t/{tenant.id}/wire-error.md"}]},
+    )
+    _login(client)
+
+    rows = {r["id"]: r for r in client.get("/api/artifacts/").data}
+    assert rows[str(art.id)]["downloadable"] is True, "the per-state branch was not read"
+
+    resp = client.get(_url(art.id))
+
+    assert resp.status_code == 200
+    assert b"Email, password" in resp.content, "the state's body did not reach the file"
+    assert "Wireframe-Login-v1" in resp["Content-Disposition"]
 
 
 # ── what must NOT be downloadable ───────────────────────────────────

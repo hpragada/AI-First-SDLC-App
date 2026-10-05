@@ -615,3 +615,54 @@ def test_a_declared_format_beats_detection(client, project, member):
     _login(client, "dev@acme.com", "dev-pass!")
     resp = client.get(_preview_url(art.id))
     assert resp.data["content_type"] == "text/csv"
+
+
+def test_a_wireframe_with_no_s3_key_of_its_own_still_reads_a_real_document(project, member):
+    """The states-only row: bodies in `external_ref.states`, nothing on the row itself.
+
+    `test_preview_multistate_wireframe_...` above sets `s3_key` on the row too, so it never
+    exercised this shape — which is how the following went unnoticed. `render_structured_ref`
+    treated `states` as CONTENT and rendered it, producing a body that read:
+
+        ## States
+        ### default
+        - **S3 key:** t/<tenant>/wire-default.md
+
+    Raw storage paths, where the document belongs. And because that body was non-empty it satisfied
+    the `if not body` guard in front of the per-state read, so the real documents were never
+    reached — on the preview screen, in a downloaded file, and in whatever publish pushed into the
+    client's Confluence.
+
+    Fixed by naming `states` a pointer key (as `page_images` already was) and resolving the default
+    state inside `_read_internal`, where all three callers share it.
+    """
+    from integrations.preview import internal_draft_body, read_artifact_preview
+    from storage.object_store import InMemoryObjectStore
+
+    store = InMemoryObjectStore()
+    tenant = project.tenant
+    dk = f"drafts/{tenant.id}/{project.id}/r/ux/SCR-002-state-1-default.html"
+    store.put(dk, "<html>Email, password, Sign in.</html>", content_type="text/html")
+    artifact = Artifact.objects.create(
+        tenant=tenant, project=project, phase="ux_design", type="wireframe",
+        sor="internal", status="draft", s3_key="", version=1,
+        external_ref={"screen_id": "SCR-002", "states": [
+            {"name": "state-1-default", "s3_key": dk},
+            {"name": "state-4-error", "s3_key": f"drafts/{tenant.id}/gone.html"},
+        ]},
+    )
+
+    payload = read_artifact_preview(
+        tenant_id=str(tenant.id), artifact_id=str(artifact.id), object_store=store)
+
+    assert payload is not None
+    assert "Email, password" in payload["body"], "the state's document was not read"
+    assert "S3 key" not in payload["body"] and dk not in payload["body"], (
+        "storage paths reached the screen"
+    )
+
+    # The publish path shares `_read_internal`, so it was pushing the same thing to a system of
+    # record. Non-negotiable #5 territory: what goes out must be the document.
+    published = internal_draft_body(artifact, store)
+    assert "Email, password" in published
+    assert "S3 key" not in published and dk not in published

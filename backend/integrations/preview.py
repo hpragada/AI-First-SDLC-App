@@ -155,6 +155,13 @@ _REF_POINTER_KEYS = {
     # Without these an image-only PDF (no extractable body) would render its filename/s3-key
     # provenance as if it were the document (BF-BUG-3b). `page_images` (A2) is a pointer list.
     "source", "filename", "source_document_id", "source_s3_key", "page_images",
+    # `states` is a multi-state artifact's list of {name, s3_key} — pointers AT the documents,
+    # never the documents. Rendered as content it produced a body reading "## States / ### default
+    # / **S3 key:** t/<tenant>/wire-default.md": raw storage paths, on a client's screen, in a
+    # downloaded file, and pushed into their Confluence on export. Worse, a non-empty body here
+    # satisfied the `if not body` guard in front of the per-state read below, so the real documents
+    # were never reached. Same class as `page_images` above (BF-BUG-3b).
+    "states",
 }
 
 
@@ -365,6 +372,18 @@ def _present(artifact, body: str, content_type: str) -> tuple[str, str, bool, di
     return rendered, _INTERNAL_CONTENT_TYPE, True, summary
 
 
+def _default_state_body(artifact, object_store) -> str:
+    """The primary document of a multi-state artifact: the state called "default", else the first.
+
+    Returns "" for an artifact that has no states, which is most of them.
+    """
+    states = [st for st in _states(artifact) if isinstance(st, dict) and st.get("s3_key")]
+    if not states:
+        return ""
+    primary = next((st for st in states if "default" in str(st.get("name") or "")), states[0])
+    return _s3_body(primary.get("s3_key"), object_store)
+
+
 def _read_internal(artifact, object_store) -> tuple[str, str]:
     body = _s3_body(artifact.s3_key, object_store)
     if body:
@@ -380,6 +399,20 @@ def _read_internal(artifact, object_store) -> tuple[str, str]:
     if body:
         fmt = str(ref.get("format", "")).lower()
         return body, _FORMAT_CONTENT_TYPE.get(fmt, _INTERNAL_CONTENT_TYPE)
+    # A multi-state artifact (per-screen wireframes) keeps one document per UI state in
+    # `external_ref.states` and may have no `s3_key` of its own. Its primary body is the "default"
+    # state, or the first one.
+    #
+    # This resolution lives HERE, not in the preview layer where it used to, because all three
+    # callers of this function need it and only one of them had it: the preview screen fell back to
+    # the default state, while a download handed over whatever `render_structured_ref` made of the
+    # row and publish pushed the same thing into a system of record. Reading a state's body is a
+    # read, not a rendering, so it does not belong to the preview-only layer below.
+    #
+    # Only the default state is fetched, not all of them — one object, as for any other artifact.
+    body = _default_state_body(artifact, object_store)
+    if body:
+        return body, _DOC_CONTENT_TYPE
     # The artifact's OWN structured external_ref content (rendered generically) ranks above
     # the run-level fallbacks: a sub-artifact (assumptions register, stakeholder map, …)
     # must preview its own content, not the whole phase document.
