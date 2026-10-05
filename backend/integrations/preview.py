@@ -384,7 +384,11 @@ def _default_state_body(artifact, object_store) -> str:
     return _s3_body(primary.get("s3_key"), object_store)
 
 
-def _read_internal(artifact, object_store) -> tuple[str, str]:
+def _read_internal(artifact, object_store, meta: dict | None = None) -> tuple[str, str]:
+    """`meta`, when given, is filled with `from_run=True` if the body came from the artifact's
+    RUN rather than from the artifact itself (S.No 317). An optional out-parameter rather than a
+    third return value on purpose: three of the four callers do not care, and changing the shape
+    for all of them to serve one would be a wider edit than the fact deserves."""
     body = _s3_body(artifact.s3_key, object_store)
     if body:
         # An agent's declaration wins over detection — it knows what it staged. `format` was
@@ -426,10 +430,18 @@ def _read_internal(artifact, object_store) -> tuple[str, str]:
         outputs = (artifact.run.outputs or {}) if artifact.run else {}
         body = _s3_body(outputs.get("artifact_s3_key"), object_store)
         if body:
+            if meta is not None:
+                meta["from_run"] = True
             return body, _INTERNAL_CONTENT_TYPE
         report = outputs.get("report") or {}
         body = report.get("body") or ""
         if body:
+            # THIS is the branch that made a hollow artifact invisible on 2026-10-05: a
+            # feasibility report whose own body was never stored rendered the run's
+            # end-of-phase summary under its own title, and nothing said so. The fallback
+            # itself is right and stays (S.No 59) — what was missing is the admission.
+            if meta is not None:
+                meta["from_run"] = True
             return body, _INTERNAL_CONTENT_TYPE
     return "", ""
 
@@ -613,6 +625,16 @@ def _read_jira(tenant_id, artifact, get_capability) -> tuple[str, str, str | Non
     return body, _ISSUE_CONTENT_TYPE, issue.url or link
 
 
+def _gate_decided(tenant_id, run_id) -> bool:
+    """Has this run's gate already been decided? S.No 318 — see the serializer field of the
+    same name, which answers it for the registry list."""
+    from apps.gates.models import Approval
+
+    return Approval.objects.filter(
+        tenant_id=tenant_id, run_id=run_id, decision=Approval.Decision.APPROVED,
+    ).exists()
+
+
 def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
                           get_capability=None, raw=False, allow_empty=False) -> dict | None:
     """The S-29 preview payload for one artifact, or `None` when it doesn't exist / has
@@ -648,8 +670,9 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
         render_summary: dict = {}
         # Multi-state artifacts (per-screen wireframes) carry one HTML document per UI state.
         states = render_states(artifact, object_store) if artifact.sor == "internal" else []
+        body_meta: dict = {}
         if artifact.sor == "internal":
-            body, content_type = _read_internal(artifact, object_store)
+            body, content_type = _read_internal(artifact, object_store, body_meta)
             if not body and states:
                 # Primary body defaults to the "default" state (or the first) so a wireframe
                 # whose row has no own s3_key still previews rather than 404-ing.
@@ -721,6 +744,20 @@ def read_artifact_preview(*, tenant_id, artifact_id, object_store=None,
             # SBOM, say). The screen uses it to offer "View raw" — without which the raw file
             # is kept but no person can ever see it (Bugs S.No 187).
             "rendered": rendered,
+            # S.No 317. True when this body belongs to the artifact's RUN, not to the artifact:
+            # it has no content of its own and you are reading the phase report instead. The
+            # fallback is deliberate and useful, but a screen that shows it without saying so
+            # puts one document's content under another document's name — which is how a
+            # feasibility report that was never saved passed a human gate on 2026-10-05.
+            "body_from_run": bool(body_meta.get("from_run")),
+            # S.No 318, same fact the registry list carries: this document's gate has been
+            # decided and it is still unpublished, so "Waiting for approval" would invite a
+            # decision nobody can give. One artifact, so the extra query is cheap here.
+            "gate_decided": bool(
+                artifact.status != Artifact.Status.PUBLISHED
+                and artifact.run_id
+                and _gate_decided(tenant_id, artifact.run_id)
+            ),
             # The headline figures behind a rendered body, so the screen can show them as
             # labelled numbers rather than a run-on line of prose. Empty for ordinary bodies.
             "render_summary": render_summary,

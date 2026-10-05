@@ -2751,6 +2751,18 @@ class ArtifactViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
             tenant_id=self.tenant_id, artifact_id=str(artifact.id))
         body_md = (preview or {}).get("body") or ""
 
+        # S.No 317. The read-through falls back to the RUN's own report when a document has no
+        # content of its own. On screen that is tolerable once it says so; pushed to a system of
+        # record it is not. It would file one document's content under another document's name,
+        # in the client's own Confluence or Jira, where our screens cannot add the caveat and
+        # where whoever reads it next has no way to know. Refuse, and say what would fix it.
+        if (preview or {}).get("body_from_run"):
+            raise ValidationError(
+                "This document has no content of its own — what you can see is the report from "
+                "the run that created it. Publishing it would file that report under this "
+                "document's name. Run the phase again to produce the document, then publish it."
+            )
+
         try:
             if target_capability == "docstore":
                 return self._publish_docstore(artifact, body_md, destination)

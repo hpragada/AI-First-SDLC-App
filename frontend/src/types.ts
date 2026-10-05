@@ -177,6 +177,10 @@ export interface Artifact {
   // re-derive it from `s3_key`/`sor` here (a wireframe previews from `external_ref.states`
   // with no `s3_key` of its own). Optional so an older API response degrades to "offer it".
   previewable?: boolean;
+  /** The gate for this document's run was already decided, yet it is still unpublished —
+   *  so "Waiting for approval" would invite a decision that cannot be given (S.No 318).
+   *  Optional: an older API simply yields today's wording. */
+  gate_decided?: boolean;
   /** Whether this row can be handed over as a FILE. Stricter than `previewable`:
    *  a preview may be a link or a synthesised summary, which a file may not be. */
   downloadable?: boolean;
@@ -943,6 +947,12 @@ export interface ArtifactPreview {
   // uses it to offer "View raw" — the raw file is kept, and without this control no person
   // could ever see it (Bugs S.No 187).
   rendered?: boolean;
+  /** True when this body belongs to the artifact's RUN, not to the artifact — it has no
+   *  content of its own and you are reading the phase report instead (S.No 317). The screen
+   *  must say so: without it, one document's content shows under another's name. */
+  body_from_run?: boolean;
+  /** The gate for this document's run was decided while it is still unpublished (S.No 318). */
+  gate_decided?: boolean;
   /** The headline figures behind a rendered body (an SBOM's counts and provenance), so the
    *  screen shows them as labelled numbers rather than a run-on line of prose. `taken` is an
    *  ISO timestamp the screen formats in the reader's own locale. */

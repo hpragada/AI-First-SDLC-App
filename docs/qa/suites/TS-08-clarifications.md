@@ -515,3 +515,28 @@ defect, covered by TC-801 — do not raise it from the other cases in this suite
   pins the behaviour so a fix is noticed.
 - The step-6 answer is required: without it you cannot tell "the second card is hidden" from "the
   second clarification was never created".
+
+---
+
+### TC-233 · The "already answered" notice stops once it has done its job
+
+**Why this case exists.** Bugs S.No 319, found 2026-10-05. The notice shown when you follow a link
+to a question that has since been answered also rendered on the answered-history tab, where its
+button — which only switches to that tab — did nothing at all when pressed.
+
+**Setup**
+- A clarification that has been answered, and the link that was sent for it (the notification link,
+  or the address bar while the question was open).
+
+**Steps**
+1. Answer a clarification, then open the link to it again.
+2. Read the notice on **Needs answer** and press **Look in the answered history**.
+3. Read the **History** tab.
+
+**Expected**
+- Step 2: the notice appears and explains why there is no form — it stops you hunting for one.
+- Step 3: **no notice**, because you have arrived where it was sending you.
+
+**Pass / Fail**
+- PASS if the notice appears exactly where it still has something to say.
+- FAIL if it shows on History, where its button leads to the page you are already on.

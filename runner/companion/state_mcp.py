@@ -275,9 +275,15 @@ def build_server(
         Pass `format` when the body you staged is NOT prose — "json", "yaml", "xml" or "csv".
         Without it the platform assumes markdown, which turns a structured document (a
         CycloneDX SBOM, say) into an unreadable wall of text on the preview screen."""
+        # Binding FIRST (S.No 313). This read `project_id or project_id_bound`, so an agent's
+        # own answer beat the one the platform launched the run with — while
+        # stage_artifact_body six lines up already used the binding alone. That asymmetry is
+        # how a body came to be staged under the real project and its row registered under a
+        # different one. The docstring above has always told the agent it does not need to
+        # know these; now it is true.
         return client.call("register_artifact",
-                           project_id=project_id or project_id_bound,
-                           run_id=run_id or run_id_bound,
+                           project_id=project_id_bound or project_id,
+                           run_id=run_id_bound or run_id,
                            phase=phase or phase_bound,
                            type=type, sor=sor, content_hash=content_hash, title=title,
                            s3_key=s3_key, external_ref=external_ref, repo_id=repo_id,

@@ -24,6 +24,7 @@ class ObjectStore(Protocol):
     def get(self, key: str) -> bytes: ...
     def copy(self, src_key: str, dst_key: str) -> str: ...
     def delete(self, key: str) -> None: ...
+    def exists(self, key: str) -> bool: ...
 
 
 class InMemoryObjectStore:
@@ -45,6 +46,9 @@ class InMemoryObjectStore:
 
     def delete(self, key: str) -> None:
         self._data.pop(key, None)
+
+    def exists(self, key: str) -> bool:
+        return key in self._data
 
 
 class S3ObjectStore:
@@ -82,6 +86,24 @@ class S3ObjectStore:
 
     def delete(self, key: str) -> None:
         self._s3.delete_object(Bucket=self._bucket, Key=key)
+
+    def exists(self, key: str) -> bool:
+        """Is there an object at this key? `head_object`, not `get`, so checking a 2 MB
+        wireframe body costs one metadata call instead of downloading it.
+
+        Only a genuine "not there" answers False — any other failure (credentials, network,
+        a bucket that is refusing everything) is raised. Swallowing those would turn an
+        outage into "this artifact has no body", which is a far more confusing thing to be
+        told, and would make the caller's refusal message a lie."""
+        import botocore.exceptions
+
+        try:
+            self._s3.head_object(Bucket=self._bucket, Key=key)
+        except botocore.exceptions.ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+        return True
 
 
 def s3_from_settings() -> S3ObjectStore:

@@ -255,7 +255,7 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
                       isPhaseReport(artifact) ? (
                         <Badge variant="info-hue" key="s">Run output</Badge>
                       ) : (
-                        artifactStatusBadge(artifact.status)
+                        artifactStatusBadge(artifact.status, artifact.gate_decided)
                       ),
                       // Screen Words group 4. Every row wore the Confluence "C" and printed the
                       // stored key, so a file in GitHub and a page in Confluence were drawn

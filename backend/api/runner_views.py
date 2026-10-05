@@ -331,6 +331,23 @@ class RunnerStateView(APIView):
                            "including marking the item done, is the platform's to decide (done "
                            "happens only after the merge gate is approved)."},
                 status=status.HTTP_403_FORBIDDEN)
+        # Guard: a pointer an agent hands over must lead somewhere (S.No 314). THIS is the
+        # boundary a companion's agent actually comes through — `/api/runner/state/…` — not the
+        # stdio MCP server, which only serves the in-worker path. The 2026-10-05 failure came in
+        # here: a feasibility report registered against a key the agent had composed by hand,
+        # one character off, with the body sitting safely at the real one. The row looked
+        # flawless on every screen and the phase wedged at publish time.
+        #
+        # Checked at registration because it is the only moment the mistake is cheap: the agent
+        # is still running and the ValueError below reaches it as a readable 400 it can act on.
+        if tool == "register_artifact" and args.get("s3_key"):
+            from mcp_platform_state.tools import _assert_body_exists
+
+            try:
+                _assert_body_exists(args["s3_key"])
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             result = fn(str(runner.tenant_id), **args)   # tenant bound server-side
         except TypeError as exc:

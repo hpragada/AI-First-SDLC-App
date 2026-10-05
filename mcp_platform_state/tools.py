@@ -435,10 +435,46 @@ def _identity_ref(type, external_ref) -> tuple[str, object] | None:
     return None
 
 
+def _assert_body_exists(s3_key, object_store=None) -> None:
+    """Refuse a registration whose body is not actually in the object store.
+
+    S.No 314. A pointer is a string the caller hands over, and nothing checked that anything
+    was behind it. On 2026-10-05 an agent registered a feasibility report against a path one
+    character off the real one: the row was flawless on every screen — title, type, version,
+    content hash, "Waiting for approval" — and completely hollow. Nobody could have seen it.
+    It was found only when a human approved the gate and the publish step walked the run's
+    artifacts and hit it, by which point the decision had already been made and the whole
+    phase wedged (S.No 315).
+
+    Called from the MCP server's `register_artifact`, NOT from this function, and the seam is
+    deliberate. The defect is an agent composing a key by hand from a manifest; platform code
+    composes keys on the line below the `store.put` that created them (onboarding, a11y,
+    quality), so checking those costs a storage round-trip per registration to re-answer a
+    question their own code just answered. The agent boundary is where untrusted pointers
+    enter, so it is where they are checked.
+
+    Checked at REGISTRATION because that is the one moment the mistake is cheap: the agent is
+    still running, is told plainly, and can stage the body again. Every later moment is
+    somebody else's problem.
+
+    A store that cannot answer is not treated as "missing" — `exists` raises on anything
+    other than a real absence, and that travels, because refusing an artifact for a network
+    blip would be its own kind of lie."""
+    if not s3_key:
+        return   # pointer-less registrations are legitimate: sor=git carries no body
+    store = _obj_store(object_store)
+    if not store.exists(s3_key):
+        raise ValueError(
+            f"no body found at {s3_key!r}, so this artifact would point at nothing. Stage the "
+            "body first with stage_artifact_body and register with the s3_key and "
+            "content_hash that call returned — do not compose the key by hand."
+        )
+
+
 def register_artifact(
     tenant_id, project_id, run_id, phase, type, sor,
     content_hash, s3_key=None, external_ref=None, repo_id=None, title="", supersedes=None,
-    format=None,
+    format=None, object_store=None,
 ) -> dict:
     """`format` declares what the staged body IS — "json", "yaml", "xml", "csv", "markdown"
     (the default when nothing is said). Bugs S.No 187: the preview announced every internal

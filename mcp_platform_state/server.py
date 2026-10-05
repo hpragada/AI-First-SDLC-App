@@ -35,6 +35,12 @@ def _bound_run() -> str | None:
     return os.environ.get("PLATFORM_RUN_ID") or None
 
 
+def _resolve_run(run_id: str | None) -> str | None:
+    """The run this launch is bound to, preferring the binding over the agent's argument —
+    the same precedence, and for the same reason, as `_resolve_project`."""
+    return _bound_run() or run_id
+
+
 def _resolve_project(project_id: str | None) -> str:
     """Agents often pass the project *name* from their manifest (or nothing) — the platform
     knows the real UUID from the launch binding, so prefer it. Only fall back to the agent's
@@ -71,8 +77,17 @@ def stage_artifact_body(
     export parses, so several artifacts sharing one body means every one of them shows — and
     exports as — the wrong content. Registering a `test_case` whose body another test case in
     this run already claimed is rejected."""
+    # `_resolve_*`, NOT `project_id or _bound_project()`. The old order let the agent's
+    # argument WIN over the binding, which is backwards twice over: this tool's docstring
+    # promises "project_id/run_id/phase are filled from this run", and `_resolve_project`
+    # two doors up gives the reason — an agent passes the project *name* from its manifest,
+    # or a UUID it copied by hand. On 2026-10-05 one such copy was out by a single character
+    # and the body went to a path nothing would ever look at: the registry row looked
+    # perfect, the artifact was hollow, and the whole phase wedged at publish time (S.No
+    # 313-316). The platform launched the run and knows the answer; it should not be
+    # overridable by a value the agent cannot know better.
     return tools.stage_artifact_body(
-        _tenant(), project_id or _bound_project(), run_id or _bound_run(),
+        _tenant(), _resolve_project(project_id), _resolve_run(run_id),
         phase, filename, body, content_type,
     )
 
@@ -168,10 +183,15 @@ def register_artifact(
     lines parses as valid YAML, so guessing would mangle far more documents than it would fix.
     An undeclared YAML or CSV body therefore previews as an unbroken wall of text (Bugs S.No
     187) — declaring it is the only way to be sure it renders as what it is."""
-    resolved_project = project_id or _bound_project()
-    resolved_run = run_id or _bound_run()
-    if not resolved_project:
-        raise RuntimeError("project_id not provided and no PLATFORM_PROJECT_ID bound.")
+    # Binding first — see the note in stage_artifact_body. A body staged under the real
+    # project and a row registered under a mistyped one is exactly how an artifact ends up
+    # pointing at nothing.
+    resolved_project = _resolve_project(project_id)
+    resolved_run = _resolve_run(run_id)
+    # A pointer an agent hands over must lead somewhere (S.No 314). This is the boundary
+    # untrusted pointers come through, and the only moment the mistake is still cheap to put
+    # right — the agent is running and can simply stage the body again.
+    tools._assert_body_exists(s3_key)
     return tools.register_artifact(
         _tenant(), resolved_project, resolved_run, phase, type, sor,
         content_hash, s3_key, external_ref, repo_id, title, supersedes,

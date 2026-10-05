@@ -524,13 +524,33 @@ class ArtifactSerializer(serializers.ModelSerializer):
 
         return artifact_is_downloadable(obj)
 
+    # Was this document's gate already decided while it still sits unpublished? S.No 318.
+    # Computed here rather than guessed on screen, because the screen holds only the artifact
+    # and the answer lives on its run's approval.
+    #
+    # It exists because of what the two screens said to each other on 2026-10-05: six documents
+    # reading "Waiting for approval" while Gates read "No gates need you". Each was truthful
+    # about its own data and together they were nonsense - you were waiting for a decision that
+    # could no longer be given, with no way to tell that from either screen.
+    gate_decided = serializers.SerializerMethodField()
+
+    def get_gate_decided(self, obj) -> bool:
+        from apps.gates.models import Approval
+
+        if obj.status == Artifact.Status.PUBLISHED or not obj.run_id:
+            return False
+        return Approval.objects.filter(
+            tenant_id=obj.tenant_id, run_id=obj.run_id,
+            decision=Approval.Decision.APPROVED,
+        ).exists()
+
     class Meta:
         model = Artifact
         # Pointer + provenance only; never the body (#1/#3).
         fields = [
             "id", "project", "repo", "run", "phase", "type", "title", "status", "sor",
             "external_ref", "s3_key", "content_hash", "version", "created_at", "previewable",
-            "downloadable",
+            "downloadable", "gate_decided",
             # When it was published, as distinct from when it was drafted (Bugs S.No 224). Null
             # until it is published, which is what "not published" means.
             "published_at",

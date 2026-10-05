@@ -45,12 +45,29 @@ export function artifactStatusLabel(status: string): string {
   return STATUS[status]?.label ?? statusLabel(status);
 }
 
+// S.No 318. "Waiting for approval" is true only while an approval can still be given. Once the
+// gate has been decided and a document is STILL unpublished, that label invites a decision that
+// no longer exists anywhere — which is exactly what six documents said on 2026-10-05 while the
+// Gates screen said "No gates need you".
+//
+// Deliberately not a new artifact status: nothing changed about the row, only what is true
+// about it. The status stays `staged`; the label stops making a promise on its behalf.
+const APPROVED_NOT_PUBLISHED = "Approved · not published";
+
+function label(status: string, gateDecided?: boolean): string {
+  if (gateDecided && status === "staged") return APPROVED_NOT_PUBLISHED;
+  return artifactStatusLabel(status);
+}
+
 /** The colour a status is drawn in where there is no badge to carry it — the traceability map. */
 export function artifactStatusColor(status: string): string {
   return STATUS[status]?.color ?? "var(--info)";
 }
 
-export function artifactStatusBadge(status: string) {
+export function artifactStatusBadge(status: string, gateDecided?: boolean) {
   const b = STATUS[status];
-  return <Badge variant={b?.variant ?? "info-hue"}>{b?.label ?? statusLabel(status)}</Badge>;
+  // Navy, like `approved` — it HAS been approved. Not the amber of a pending gate, which is
+  // the colour of "somebody must act", and nobody can.
+  const variant = gateDecided && status === "staged" ? "navy" : (b?.variant ?? "info-hue");
+  return <Badge variant={variant}>{label(status, gateDecided)}</Badge>;
 }

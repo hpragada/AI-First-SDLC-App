@@ -171,7 +171,7 @@ function ArtifactPreviewLive() {
               {/* Same mapping as the registry list, so a status does not change colour between
                   the two screens. This one already showed the real token as its text — it was the
                   list that hardcoded "Draft" for anything it did not recognise. */}
-              {artifactStatusBadge(data.status)}
+              {artifactStatusBadge(data.status, data.gate_decided)}
               {offersRaw && (
                 <button
                   type="button"
@@ -200,7 +200,19 @@ function ArtifactPreviewLive() {
                 </>
               )}
             </div>
-            {isPhaseReport(data) ? (
+            {data.body_from_run && !isPhaseReport(data) ? (
+              // S.No 317. Nothing was ever stored for this document, so the read-through fell
+              // back to its run's report. That fallback is deliberate and the content is worth
+              // reading — but shown silently it puts the run's words under this document's
+              // title, which is exactly how a feasibility report that was never saved got
+              // through a human gate on 2026-10-05. `isPhaseReport` rows are excluded because
+              // they already say something truer about themselves, just below.
+              <Banner variant="warning" title="This document has no content of its own">
+                You are reading the report from the run that created it, not the document
+                itself — nothing was saved for this one. Run the phase again to produce it.
+                It cannot be published to a connected system until then.
+              </Banner>
+            ) : isPhaseReport(data) ? (
               // The platform files the engine's closing message as a phase-typed artifact
               // whatever that message says. When a run fails mid-phase that text is a status
               // report or a list of unanswered questions — never the deliverable — so it must

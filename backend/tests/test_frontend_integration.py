@@ -822,3 +822,40 @@ def test_run_takeover_via_run_id(client, project, member):
     # 404 for unknown run is correct; 400 means routing worked but validation failed
     assert r.status_code in (404, 400), \
         f"Expected 404/400 for unknown run take-over, got {r.status_code}: {r.data}"
+
+
+def test_a_document_borrowing_its_run_s_report_cannot_be_published(client, project, admin):
+    """S.No 317 part C. On screen the fallback is tolerable once it says so; pushed to a client's
+    Confluence it is not — it would file the run's report under this document's name, somewhere
+    our screens cannot add the caveat and the next reader has no way to know."""
+    from apps.integrations.models import IntegrationConnection
+    from apps.registry.models import AgentSpec, Artifact
+    from apps.runs.models import Run
+    from apps.workitems.models import WorkItem
+
+    wi = WorkItem.objects.create(
+        tenant=admin.tenant, project=project, type=WorkItem.Type.STORY, feature_stream="hr")
+    spec = AgentSpec.objects.create(
+        tenant=admin.tenant, key="01_ideation", body_ref="agents/01_ideation/agent.md")
+    run = Run.objects.create(
+        tenant=admin.tenant, work_item=wi, agent_spec=spec,
+        outputs={"report": {"body": "The ideation phase is complete. Here is a summary:"}})
+    a = Artifact.objects.create(
+        tenant=admin.tenant, project=project, run=run, phase="01_ideation",
+        type="feasibility_report", title="Feasibility Report",
+        status=Artifact.Status.APPROVED, sor="internal",
+        s3_key="drafts/never-written", content_hash="abc123", version=1,
+    )
+    IntegrationConnection.objects.create(
+        tenant=admin.tenant, capability="docstore", connector="test_fake_pub",
+    )
+    _login(client, "boss@acme.com", "admin-pass!")
+    r = client.post(
+        f"/api/artifacts/{a.id}/publish/",
+        {"target_capability": "confluence", "destination": "SDLC"},
+        format="json",
+    )
+    assert r.status_code == 400, r.data
+    said = str(r.data)
+    assert "no content of its own" in said
+    assert "Run the phase again" in said

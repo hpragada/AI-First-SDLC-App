@@ -1327,3 +1327,99 @@ logging out and logging back in — never by editing data.
   `Reviewed the cancelled defect WI-<n> — Security: <title> (cancelled by <name>: <reason>)`, which
   the reviewer must tick. Step 5 uses the re-run route because it proves the finding was actually
   fixed.
+
+---
+
+### TC-230 · Approving a gate publishes every document, and one bad document doesn't stop the rest
+
+**Why this case exists.** Found live on 2026-10-05. A phase produced 7 documents; one of them had
+been filed against a storage path one character wrong, so its contents were never really there.
+Approving the gate published **one** document, stranded the other six at "Waiting for approval",
+and left the phase neither finished nor failed — with the gate gone from the Gates screen, so no
+button existed anywhere that would publish the rest. The only evidence was a line in a server log.
+Bugs S.No 313–316.
+
+**Setup**
+- A work item ready for a phase that produces several documents (Ideation produces 7).
+- A connected companion. **This case costs engine usage** — run it when budget allows.
+
+**Steps**
+1. Trigger the phase and let it finish. Note how many documents appear in Artifacts.
+2. Approve the gate.
+3. Re-open **Artifacts**.
+4. Re-open **Phases & Runs** and find the run.
+
+**Expected**
+- **Every** document moves to **Published** — not one, not some.
+- The run reads as finished, with an end time, and the work item has moved on.
+- The Gates screen shows the decision in **Decided history**, attributed to you.
+
+**Pass / Fail**
+- **FAIL if any document is left at "Waiting for approval" after approving.**
+- FAIL if the run stays at "Awaiting gate" after the decision.
+- FAIL if the Gates screen shows no gates while documents still say they are waiting for one —
+  that contradiction is TC-231.
+
+**Notes**
+- Bugs S.No 315 is the resilience fix; 313 and 314 are what stop the bad document existing at all.
+- If one document genuinely cannot be published, the others still must, and the run must still
+  finish. That is the fix working, not a partial failure.
+
+---
+
+### TC-231 · A document never says it is waiting for an approval that cannot be given
+
+**Why this case exists.** After the failure above, six documents read "Waiting for approval" while
+the Gates screen read "No gates need you". Both were truthful about their own data; together they
+were nonsense. Bugs S.No 318.
+
+**Setup**
+- Any document whose gate has been decided but which is not published. Hard to produce
+  deliberately now that S.No 315 is fixed — check it opportunistically whenever a publish is
+  incomplete for any reason.
+
+**Steps**
+1. Open **Artifacts** and read the status of each document from a decided run.
+2. Open one and read the badge at the top.
+
+**Expected**
+- Such a document reads **"Approved · not published"** in the approved colour, on both screens.
+- It never reads "Waiting for approval" once its gate has been decided.
+
+**Pass / Fail**
+- PASS if the two screens agree about whether anyone still has to act.
+- FAIL if a document invites an approval while Gates shows none pending.
+
+---
+
+### TC-232 · A document with no contents of its own says so, and cannot be published onward
+
+**Why this case exists.** The most dangerous of the group. When a document's contents are missing,
+Preview falls back to the report of the run that created it — deliberately, and the content is
+genuinely useful. But it said nothing, so one document's content appeared under another
+document's name. A tester, a gate and an assistant all looked at it and none could have known.
+Bugs S.No 317.
+
+**Setup**
+- A document whose stored contents are missing. Since S.No 314 this cannot be created through the
+  app any more — check it opportunistically, or ask a developer to arrange one.
+
+**Steps**
+1. Open the document's **Preview**.
+2. Try to publish it to a connected system (Confluence or Jira).
+
+**Expected**
+- An amber message above the body: **"This document has no content of its own"**, explaining that
+  you are reading the report from the run that created it and that re-running the phase will
+  produce the real document.
+- Publishing is **refused** in plain words, saying that publishing it would file the run's report
+  under this document's name.
+
+**Pass / Fail**
+- PASS if the screen admits whose content it is showing, and the export refuses.
+- **FAIL if the body appears with no warning** — that is the original defect.
+- **FAIL if it publishes.** On our own screen the caveat sits beside the text; in a client's
+  Confluence it cannot, and the next reader has no way to know.
+
+**Notes**
+- The fallback is deliberately kept. The fix is the admission, not the removal.

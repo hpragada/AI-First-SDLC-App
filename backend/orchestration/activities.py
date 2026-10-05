@@ -382,6 +382,9 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
 
     published: list[str] = []
     left_draft: list[str] = []
+    #: Artifacts the gate approved that could NOT be published, with the reason. Distinct from
+    #: `left_draft`, which is a deliberate policy decision — these are failures.
+    failed: list[dict] = []
     for artifact in artifacts:
         if artifact.phase in NEVER_AUTO_PUBLISHED_PHASES:
             # Not a skip-if-already-done: this is a decision, and it is recorded as one. A run
@@ -394,11 +397,28 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
             continue
 
         if artifact.s3_key:  # immutable audit snapshot regardless of SoR
+            # Keyed by ARTIFACT, not by phase. It used to be `{artifact.phase}.v{version}.md`,
+            # and every artifact of a phase shares that phase and (on a first run) that
+            # version — so a seven-artifact ideation wrote seven snapshots over the top of
+            # each other and kept ONE (S.No 316). Silent: no error, no warning, just six
+            # missing files in the record that is supposed to prove what a human approved.
             snap = (
                 f"snapshots/{inp.tenant_id}/{inp.project_id}/{inp.run_id}/"
-                f"{artifact.phase}.v{artifact.version}.md"
+                f"{artifact.phase}.{artifact.id}.v{artifact.version}.md"
             )
-            store.copy(artifact.s3_key, snap)
+            try:
+                store.copy(artifact.s3_key, snap)
+            except Exception as exc:  # noqa: BLE001 — see below
+                # ONE artifact's snapshot failing must not abort the other six (S.No 315).
+                # This loop is not a transaction, so an exception here used to leave the run
+                # half-published AND unfinished: the gate was decided, the gate was gone from
+                # the screen, and no control existed anywhere that would publish the rest.
+                # Temporal then retried the activity forever, failing identically each time.
+                # The human's decision was real and the other artifacts are fine — honour it,
+                # and record precisely what was left behind.
+                failed.append({"id": str(artifact.id), "title": artifact.title,
+                               "reason": f"{type(exc).__name__}: {exc}"})
+                continue
 
         tools.update_artifact(
             inp.tenant_id, str(artifact.id),
@@ -419,12 +439,20 @@ def publish_artifacts_core(inp: AgentRunInput) -> dict:
         # not here — that path owns the approver + decided_at.
         tools.log_event(
             inp.tenant_id, "orchestrator", "artifacts.published", "run", inp.run_id,
-            {"artifact_ids": published, "left_draft": left_draft},
+            {"artifact_ids": published, "left_draft": left_draft, "failed": failed},
         )
+        if failed:
+            # A SECOND event, on the run, so this is visible where people actually look
+            # instead of only in a worker container's log — which is where the 2026-10-05
+            # failure hid while the screens showed nothing wrong anywhere (S.No 315).
+            tools.log_event(
+                inp.tenant_id, "orchestrator", "artifacts.publish_failed", "run", inp.run_id,
+                {"count": len(failed), "artifacts": failed},
+            )
     # A vision run's artifact IS the document's artifact — link it back, or the document would
     # stay pointing at nothing (see link_vision_artifact_core).
     link_vision_artifact_core(inp)
-    return {"published": published, "left_draft": left_draft}
+    return {"published": published, "left_draft": left_draft, "failed": failed}
 
 
 def transition_work_item_core(inp: AgentRunInput, to_state: str) -> dict:

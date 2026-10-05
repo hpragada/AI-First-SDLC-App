@@ -454,7 +454,10 @@ function ClarificationsLive() {
         onSelect={(id) => setTab(id as "pending" | "history")}
       />
 
-      {staleLink && (
+      {/* Not on the history tab (S.No 319). The whole job of this notice is to send you to the
+          answered history; once you are there it has nothing left to say, and its button —
+          which only switches to this tab — does nothing at all when pressed. */}
+      {staleLink && tab !== "history" && (
         <Banner variant="info" title="That question has already been answered">
           <p className="t-sm">
             Nothing is open, so no answer can land on the wrong question. If it was just answered,
