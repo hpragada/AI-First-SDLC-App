@@ -32,10 +32,15 @@ export function CancelWorkItem({
   workItem,
   onClose,
   onCancelled,
+  childCount,
 }: {
   workItem: Pick<WorkItem, "id" | "key" | "title" | "type">;
   onClose: () => void;
   onCancelled?: () => void;
+  /** How many work items sit under this one. Optional — only the epic/story screen knows it
+   *  (children ride the lifecycle payload, not the work item), and only it needs to say what
+   *  happens to them. Omitted everywhere else, which reads as "not applicable", not "none". */
+  childCount?: number;
 }) {
   const [choice, setChoice] = useState<string>(REASONS[0]);
   const [detail, setDetail] = useState("");
@@ -83,6 +88,16 @@ export function CancelWorkItem({
         the same as finishing it. The item stays on the board marked Cancelled, nothing is
         deleted, and you can reopen it later.
       </p>
+      {Boolean(childCount) && (
+        // The platform does NOT cascade (apps/workitems/cancel.py), and a person about to
+        // cancel an epic has no way to know that. Said plainly rather than left to be
+        // discovered: the alternative is somebody assuming one click closed a whole branch,
+        // or assuming it did not, and both assumptions are made silently.
+        <p className="t-body">
+          The {childCount} item{childCount === 1 ? "" : "s"} under this one are{" "}
+          <strong>not affected</strong> — cancel them separately if they should close too.
+        </p>
+      )}
       {isDefect && (
         // Said BEFORE the decision, not after. A defect is what holds a gate shut, so this is
         // the consequence most likely to surprise someone — and the reviewer at that gate will

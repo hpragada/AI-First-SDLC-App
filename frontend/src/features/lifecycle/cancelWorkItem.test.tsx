@@ -197,7 +197,7 @@ describe("a cancelled work item", () => {
     // The bug: a cancelled defect rendered a red "Open" badge and a Trigger Fix button.
     expect(screen.queryByText("Open")).toBeNull();
     expect(screen.queryByRole("button", { name: /Trigger Fix/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Won't fix/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Cancel work item/ })).toBeNull();
   });
 
   it("offers no Trigger phase on a task", async () => {
@@ -207,7 +207,7 @@ describe("a cancelled work item", () => {
 
     await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
     expect(screen.queryByRole("button", { name: /Trigger phase/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Cancel task/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Cancel work item/ })).toBeNull();
   });
 
   it("still offers both on a live task", async () => {
@@ -218,7 +218,7 @@ describe("a cancelled work item", () => {
 
     await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
     expect(screen.getByRole("button", { name: /Trigger phase/ })).toBeDefined();
-    expect(screen.getByRole("button", { name: /Cancel task/ })).toBeDefined();
+    expect(screen.getByRole("button", { name: /Cancel work item/ })).toBeDefined();
   });
 });
 

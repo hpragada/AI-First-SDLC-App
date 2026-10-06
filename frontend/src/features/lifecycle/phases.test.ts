@@ -92,3 +92,59 @@ describe("visibleLifecycleNodes", () => {
     expect(out[0].label).toBe("Task Breakdown");
   });
 });
+
+// ── 2026-10-06: machine names reached a client's screen ─────────────────────
+//
+// The rail showed "A11y Judge" and "A11y Journey". Neither is a wrong label — they are MISSING
+// ones: the lookup had no entry, so the fallback above prettified the raw key into something
+// plausible. That is why it survived. These tests pin the names and, more importantly, pin the
+// rule that a phase the platform runs must never fall through to the fallback.
+describe("phase names a client reads", () => {
+  it("names the accessibility phases in words, not agent keys", () => {
+    expect(phaseLabel("09c_a11y_judge")).toBe("Accessibility Judge");
+    expect(phaseLabel("09d_a11y_journey")).toBe("Keyboard Journey");
+    expect(phaseLabel("00e_document_vision")).toBe("Document Vision");
+  });
+
+  it("resolves them from the bare name too, as the backend sends it", () => {
+    // `phase_label` in the database holds a machine key ("a11y_judge"), not a label.
+    expect(phaseLabel("a11y_judge")).toBe("Accessibility Judge");
+    expect(phaseLabel("a11y_journey")).toBe("Keyboard Journey");
+  });
+
+  it("never shows a label that still looks like a key", () => {
+    for (const key of ["09c_a11y_judge", "09d_a11y_journey", "00e_document_vision"]) {
+      const label = phaseLabel(key);
+      expect(label).not.toMatch(/_/);          // no underscores
+      expect(label).not.toMatch(/^A11y/);      // not the prettified key
+      expect(label).not.toMatch(/^\d/);        // no ordinal
+    }
+  });
+});
+
+describe("the Work Items board is not disturbed", () => {
+  // The three names above are deliberately NOT in PLANNING_PHASES, because that array also
+  // builds the board's columns — adding an entry to fix a NAME would silently add a COLUMN.
+  it("gains no columns from the phases named above", () => {
+    const keys = lifecyclePhaseColumns().map((c) => c.key);
+    expect(keys).not.toContain("09c_a11y_judge");
+    expect(keys).not.toContain("09d_a11y_journey");
+    expect(keys).not.toContain("00e_document_vision");
+    expect(keys[0]).toBe("01_ideation");
+  });
+});
+
+describe("document vision belongs to a project, not a work item", () => {
+  it("is treated as onboarding, like the other three", () => {
+    expect(isBrownfieldPhase("00e_document_vision")).toBe(true);
+    expect(isBrownfieldPhase("document_vision")).toBe(true);
+  });
+
+  it("is dropped from a rail", () => {
+    const nodes = [
+      { phase: "00e_document_vision", label: "document_vision", state: "not_started" },
+      { phase: "01_ideation", label: "ideation", state: "done" },
+    ] as unknown as LifecycleNode[];
+    expect(visibleLifecycleNodes(nodes).map((n) => n.phase)).toEqual(["01_ideation"]);
+  });
+});

@@ -79,6 +79,16 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
   `Parent` link. Where there is no key, draw **nothing**: a chip reading `↖ 65db8214` names nothing
   and costs the reader a click to find out. `WorkItemViewSet` must keep its `select_related("parent")`
   or `parent_key` becomes one query per card on an unpaginated board; a test holds the query ceiling.
+- **BUILT 2026-10-06, and it was not built before.** The endpoint worked `tier` out and then never
+  used it, so every work item type rendered all 19 phases while each caption claimed otherwise —
+  exactly what the rule below forbids. Which phases belong to which tier now lives in ONE place,
+  `apps/registry/catalog.py` (`PLAN_PHASE_KEYS` / `BUILD_PHASE_KEYS` / `REMEDIATION_PHASE_KEYS`),
+  beside the agents themselves. Do not re-derive it per screen or from a key's leading digits —
+  that prefix rule is what mis-filed UX Design and Task Breakdown as build work (Bugs S.No 321).
+  Two things to know before changing it: **remediation is a SELECTION over build, never a partition
+  of it** (those phases belong to tasks too — carving them out empties the task rail), and the
+  **plan RAIL is the plan tier minus onboarding** (onboarding belongs to a project, not a work item,
+  while the phase CATALOG must still offer it so brownfield can trigger it).
 - **Type-adaptive rail (S-15/16/17):** the `lifecycle/` endpoint returns `tier` — render the plan rail
   for epics **and stories**, the build rail (only) for tasks, the remediation rail for defects. Never
   show plan phases on a task (the §6.0 rule in the journeys spec). **A `story` is a planning item** —

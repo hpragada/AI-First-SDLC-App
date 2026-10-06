@@ -13,6 +13,7 @@ import {
   Spinner,
 } from "../../components/ui";
 import { isInternalStream } from "../../types";
+import { CancelWorkItem } from "./CancelWorkItem";
 import { EditWorkItem } from "./EditWorkItem";
 import { ReopenWorkItem } from "./ReopenWorkItem";
 import { railNodeView } from "./railView";
@@ -48,6 +49,7 @@ function WorkItemEpicLive() {
   // return is a hook that stops being called once the data arrives.
   const [editOpen, setEditOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   if (workItem.isLoading || lifecycle.isLoading) {
     return (
@@ -110,13 +112,28 @@ function WorkItemEpicLive() {
           <Link to={`/work-items/${id}/test-cases`} className="btn btn--secondary">
             Test cases
           </Link>
+          {/* An epic and a story could be cancelled through the API all along — the server has
+              never restricted it by type — but no screen offered it, and this one has shown
+              Reopen… since it was built. It could undo a cancellation it gave nobody a way to
+              make (2026-10-06). Hidden once the work is done, matching the task screen: `done`
+              is terminal, and the only move out of it is not this one. */}
+          {workItem.data.state !== "cancelled" && workItem.data.state !== "done" && (
+            <Button variant="secondary" onClick={() => setCancelOpen(true)}>
+              Cancel work item…
+            </Button>
+          )}
         </span>
       </div>
 
       <Panel
         flush
         title="Lifecycle — Planning"
-        actions={<span className="t-sm u-muted">{itemType} · one pass through plan phases</span>}
+        // Says what these phases are FOR, about this item, rather than labelling our internals.
+        actions={(
+          <span className="t-sm u-muted">
+            Planned once for the whole {itemType.toLowerCase()}
+          </span>
+        )}
       >
         {nodes.length === 0 ? <p className="t-sm u-muted">No phases run yet.</p> : <LifecycleRail nodes={nodes} />}
       </Panel>
@@ -208,8 +225,12 @@ function WorkItemEpicLive() {
               <h3 className="t-h3" style={{ marginBottom: "var(--space-3)" }}>
                 At a glance
               </h3>
+              {/* The five rows every work item screen now answers, in the same order, so moving
+                  between an epic, a task and a defect does not mean re-learning the card.
+                  `State` was the one this screen lacked. */}
               <Kv
                 rows={[
+                  ["State", statusLabel(workItem.data.state)],
                   // N2: the count was inert text — the card told you there were four artifacts
                   // and left you to find them in the registry by hand.
                   [
@@ -239,6 +260,13 @@ function WorkItemEpicLive() {
         <EditWorkItem workItem={workItem.data} onClose={() => setEditOpen(false)} />
       )}
 
+      {cancelOpen && (
+        <CancelWorkItem
+          workItem={workItem.data}
+          childCount={lifecycle.data?.children?.length ?? 0}
+          onClose={() => setCancelOpen(false)}
+        />
+      )}
       {reopenOpen && (
         <ReopenWorkItem workItem={workItem.data} onClose={() => setReopenOpen(false)} />
       )}
@@ -306,7 +334,7 @@ function WorkItemEpicGallery({ view }: { view: EpicView }) {
       <Panel
         flush
         title="Lifecycle — Planning"
-        actions={<span className="t-sm u-muted">Epic · one pass through plan phases</span>}
+        actions={<span className="t-sm u-muted">Planned once for the whole epic</span>}
       >
         <LifecycleRail nodes={nodes} />
       </Panel>

@@ -6,7 +6,7 @@ import { Badge, Banner, Button, Combobox, ConfirmDialog, EmptyState, Field, Moda
 import { engineLabel, runStatusLabel, runStatusTone } from "../../labels";
 import { useCompanionStatus } from "../identity/hooks";
 import { roleLabel } from "../identity/roles";
-import { phaseLabel } from "./phases";
+import { isBrownfieldPhase, phaseLabel } from "./phases";
 import { usePhaseCatalog, useRuns, useTriggerPhase, useWorkItems } from "./hooks";
 import type { PhaseCatalogEntry, Run } from "../../types";
 
@@ -46,12 +46,25 @@ export function PhasesAndRuns({ forceView }: { forceView?: PhasesRunsView }) {
   // In the gallery (forceView) we still show sampleRuns so the design catalogue has data.
   const showRunsEmpty = view === "no-runs" || (!forceView && (runs.data?.length ?? 0) === 0);
 
-  // All phases from the live catalog: plan + build in order
+  // All phases from the live catalog: plan + build in order.
+  //
+  // The onboarding phases (Onboarding, Context Bridge, Context Extraction, Document Vision)
+  // read an existing codebase and report what is missing from it. On a project started from
+  // scratch there is nothing for them to read, and the team found all four offered on a
+  // greenfield project with no way to tell they were irrelevant (2026-10-06). The app already
+  // takes this position elsewhere — the Onboarding SCREEN is hidden from greenfield, saying
+  // "the lifecycle begins at Ideation instead" (AppShell, RequireBrownfield) — and this screen
+  // simply never got the same rule.
+  //
+  // `=== "greenfield"` and NOT `!== "brownfield"`, matching those two exactly: an API too old
+  // to send the track must show the phases rather than hide a brownfield team's own work from
+  // them mid-deploy (S.No 221).
+  const hideOnboardingPhases = selectedProject?.track === "greenfield";
   const allPhases: PhaseCatalogEntry[] = [
     ...(catalog.data?.plan ?? []),
     ...(catalog.data?.build ?? []),
     ...(catalog.data?.remediation ?? []),
-  ];
+  ].filter((p) => !(hideOnboardingPhases && isBrownfieldPhase(p.key)));
 
   // Gallery fallback phases (used only when forceView is set)
   const galleryPhases: PhaseCatalogEntry[] = [

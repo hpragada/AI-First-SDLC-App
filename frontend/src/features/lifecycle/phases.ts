@@ -6,17 +6,43 @@
 import { PLANNING_PHASES } from "../../types";
 import type { LifecycleNode } from "../../types";
 
-const LABEL_BY_KEY = new Map(PLANNING_PHASES.map((p) => [p.key, p.label]));
+// Phases that are NOT board columns but still need a human name.
+//
+// They are kept out of PLANNING_PHASES deliberately. That array does double duty — it is the
+// label catalog AND the source of the Work Items board's columns (`lifecyclePhaseColumns`), so
+// adding an entry to fix a NAME silently adds a COLUMN. These three are not places a work item
+// sits: the two accessibility phases run on hidden carrier work items, and document vision
+// belongs to project onboarding.
+//
+// Without them the lookup missed and the fallback below prettified the raw key — which is how
+// `09c_a11y_judge` reached a client's screen as "A11y Judge" (2026-10-06). The fallback is
+// right to exist and wrong to be relied on: it produces something plausible, so nobody notices.
+const EXTRA_PHASE_LABELS: [string, string][] = [
+  ["00e_document_vision", "Document Vision"],
+  ["09c_a11y_judge", "Accessibility Judge"],
+  ["09d_a11y_journey", "Keyboard Journey"],
+];
+
+const LABEL_BY_KEY = new Map<string, string>([
+  ...PLANNING_PHASES.map((p) => [p.key, p.label] as [string, string]),
+  ...EXTRA_PHASE_LABELS,
+]);
 // Also index by the bare (ordinal-stripped) name so a backend node label like "prd" or
 // "ux_design" still resolves to the catalog's proper casing ("PRD", "UX Design") instead of
 // the naive title-case fallback ("Prd", "Ux Design"). Bugs.xlsx: rail vs board disagreed.
-const LABEL_BY_BARE = new Map(PLANNING_PHASES.map((p) => [normalize(p.key), p.label]));
+const LABEL_BY_BARE = new Map<string, string>([
+  ...PLANNING_PHASES.map((p) => [normalize(p.key), p.label] as [string, string]),
+  ...EXTRA_PHASE_LABELS.map(([k, l]) => [normalize(k), l] as [string, string]),
+]);
 
 // Brownfield / project-onboarding phases (the 00_* group) — hidden from a work item's rail.
 const BROWNFIELD_PHASE_KEYS = new Set([
   "00_onboarding",
   "00b_context_bridge",
   "00c_intelligent_context_extractor",
+  // Added to the platform after this filter was written, and never registered here — so the one
+  // onboarding phase nobody remembered appeared on every work item's rail (2026-10-06).
+  "00e_document_vision",
 ]);
 
 // Match either the raw key or the bare name, with or without the leading "NN[x]_" ordinal.
@@ -27,7 +53,8 @@ function normalize(phase: string): string {
 export function isBrownfieldPhase(phase: string): boolean {
   if (BROWNFIELD_PHASE_KEYS.has(phase)) return true;
   const bare = normalize(phase);
-  return ["onboarding", "context_bridge", "intelligent_context_extractor"].includes(bare);
+  return ["onboarding", "context_bridge", "intelligent_context_extractor",
+    "document_vision"].includes(bare);
 }
 
 // A clean, human-readable label for a phase key/name — no underscores, no ordinal prefix.

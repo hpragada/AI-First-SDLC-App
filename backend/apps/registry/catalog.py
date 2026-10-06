@@ -168,6 +168,63 @@ AGENT_CATALOG: list[AgentDefinition] = [
 #: Catalog entries the platform actually seeds + triggers (retired agents excluded).
 ACTIVE_AGENT_CATALOG: list[AgentDefinition] = [d for d in AGENT_CATALOG if not d.retired]
 
+#: WHICH PHASES BELONG TO WHICH KIND OF WORK ITEM.
+#:
+#: One place, because the answer was being derived twice from a key's leading digits and the two
+#: derivations had drifted: `WorkItemViewSet.lifecycle` worked out a tier from the work item's
+#: type and then never used it, so an epic, a task and a defect all rendered the same 19-phase
+#: rail while each caption claimed something different (2026-10-06).
+#:
+#: Membership is spelled out rather than parsed from the ordinal. The prefix rule read "05-12 is
+#: build", which put UX DESIGN and TASK BREAKDOWN in the build tier — and 06 is the phase that
+#: CREATES tasks (its body calls create_work_item for every epic, story and task it emits), so a
+#: phase that produces tasks was being offered as something to run ON a task. Both read only
+#: planning outputs (prd / requirements / architecture / adr), and both are inputs to 07. Build
+#: begins at implementation.
+PLAN_PHASE_KEYS: frozenset[str] = frozenset({
+    "00_onboarding", "00b_context_bridge", "00c_intelligent_context_extractor",
+    "00e_document_vision",
+    "01_ideation", "02_requirements", "03_prd", "04_architecture",
+    "05_ux_design", "06_task_breakdown",
+})
+
+BUILD_PHASE_KEYS: frozenset[str] = frozenset({
+    "07_implementation", "08_code_review", "09_testing", "09b_test_automation",
+    "09c_a11y_judge", "09d_a11y_journey", "10_security", "11_cicd", "12_deployment",
+})
+
+#: What a DEFECT runs — its repair path, and deliberately a SUBSET of BUILD_PHASE_KEYS rather
+#: than a third bucket carved out of it. Those five phases belong to tasks too; partitioning
+#: them away would empty the task rail. A defect's "Trigger Fix" runs 07, the fix is reviewed by
+#: 08 inside that build loop, 09/09b prove the defect is gone, and 10 covers a fix that touches
+#: sensitive code. Re-designing the product (05) or re-planning it (06) is not repair work.
+REMEDIATION_PHASE_KEYS: frozenset[str] = frozenset({
+    "07_implementation", "08_code_review", "09_testing", "09b_test_automation", "10_security",
+})
+
+#: Project onboarding. These read an EXISTING CODEBASE and report what is missing from it, so
+#: they belong to a project, not to any one work item — a brownfield team triggers them once,
+#: before ideation. They stay inside PLAN_PHASE_KEYS because the phase catalog (and therefore
+#: the trigger screen) must still offer them; they are subtracted from the RAIL below.
+ONBOARDING_PHASE_KEYS: frozenset[str] = frozenset({
+    "00_onboarding", "00b_context_bridge", "00c_intelligent_context_extractor",
+    "00e_document_vision",
+})
+
+#: The rail a work item type should show. `story` plans like an epic; `test_case` is delivered
+#: like a task. Anything unknown plans, which is the safe default — a rail that shows too much
+#: is survivable, one that shows nothing is not.
+#:
+#: Note the subtraction: a RAIL is per work item and onboarding is per project, so the plan rail
+#: is the plan tier minus onboarding. The catalog keeps the full set — same distinction that
+#: already exists in the browser, where `visibleLifecycleNodes` strips the same four.
+PHASE_KEYS_BY_TIER: dict[str, frozenset[str]] = {
+    "plan": PLAN_PHASE_KEYS - ONBOARDING_PHASE_KEYS,
+    "build": BUILD_PHASE_KEYS,
+    "remediation": REMEDIATION_PHASE_KEYS,
+}
+
+
 _BY_KEY = {d.key: d for d in AGENT_CATALOG}
 _BY_COMMAND = {d.command: d for d in AGENT_CATALOG}
 _BY_PHASE_LABEL = {d.phase_label: d for d in AGENT_CATALOG}

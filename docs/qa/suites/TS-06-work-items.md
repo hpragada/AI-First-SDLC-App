@@ -1389,3 +1389,162 @@ that does, it runs last, and it needs no companion — see the case for what to 
 - Step 5 matters more than it looks. The button row is shared by **every** page in the product, so
   a clipped button here was a clipped button everywhere a title happened to be long enough. Worth
   a quick look at other detail screens while you are in there.
+
+---
+
+### TC-925 · Each kind of work item shows the phases it actually runs
+
+**Why this case exists.** Found 2026-10-06, the first time anyone opened a task and a defect
+screen side by side on a clean tenant. All three types drew the identical 19-phase rail while
+each caption claimed something different — a task offered Ideation, an epic offered Deployment.
+The platform had already worked out the right answer and thrown it away. Bugs S.No 320, 321, 324.
+
+**Setup**
+- One epic, one task and one defect in the same project. **No companion and no engine usage
+  needed** — this is what the screens draw, not what they run.
+
+**Steps**
+1. Open the **epic**. Read the rail and the caption at its right.
+2. Open a **story**, if you have one.
+3. Open the **task**.
+4. Open the **defect**.
+
+**Expected**
+
+| Screen | Caption | Rail |
+|---|---|---|
+| Epic / Story | one pass through plan phases | Ideation → Requirements → PRD → Architecture → **UX Design → Task Breakdown** |
+| Task | build phases only | **Implementation** → Code Review → Testing → Test Automation → Accessibility Judge → Keyboard Journey → Security → CI/CD → Deployment |
+| Defect | minimal rail | Implementation → Code Review → Testing → Test Automation → Security |
+
+**Pass / Fail**
+- PASS when each rail matches the table and each caption is true of what is under it.
+- **FAIL if the defect's rail is empty.** That is the specific trap this fix had to avoid: a
+  defect's phases are also a task's, so they are a selection from the task list, not a group
+  taken out of it.
+- **FAIL if a task offers UX Design or Task Breakdown.** Task Breakdown is the phase that
+  *creates* tasks — offering it on a task could never have worked.
+- FAIL if any rail still shows Onboarding, Context Bridge, Context Extraction or Document Vision.
+
+**Notes**
+- A story has no screen of its own — it shares the epic's, so it must match the epic exactly.
+
+---
+
+### TC-926 · No phase is named with our internal shorthand
+
+**Why this case exists.** Two phases reached a client's screen as "A11y Judge" and "A11y
+Journey". They were not wrong labels but *missing* ones: when a phase has no proper name the
+screen tidies up the internal one, which produces something that looks deliberate. Bugs S.No 323.
+
+**Steps**
+1. Open a **task** and read every phase name on its rail.
+2. Open **Phases & Runs** and read every button.
+
+**Expected**
+- **Accessibility Judge** and **Keyboard Journey** — never "A11y" anything.
+- No name contains an underscore, and none begins with a number.
+- The caption beside each rail is a sentence about that item — **"Planned once for the whole
+  epic"**, **"The phases that deliver this task"**, **"The phases that fix this defect"** —
+  never "minimal rail", "plan phases" or "build phases only".
+- The defect's panel is headed **Lifecycle — Repair**, not "Remediation".
+
+**Pass / Fail**
+- PASS if every phase reads as something a client would say out loud.
+- FAIL on any "A11y", any underscore, or any leading digit.
+
+**Notes**
+- Also check the **Work Items board** has exactly the columns it had before — the same list
+  feeds those columns, and adding names there would have silently added two.
+
+---
+
+### TC-927 · One cancel button, on every kind of work item
+
+**Why this case exists.** A task said "Cancel task…" and a defect said "Won't fix…" — one
+action with two names — and an epic or story could not be cancelled at all, while still
+offering to *reopen* one. Bugs S.No 325, 326.
+
+**Steps**
+1. Open an epic, a story, a task and a defect. Read the buttons.
+2. On the **epic**, press **Cancel work item…** and read the dialog.
+3. Cancel it, then find it again and **Reopen** it.
+4. Open a finished (done) task.
+
+**Expected**
+- All four screens offer **Cancel work item…**, worded identically.
+- The dialog asks for a reason, and **"Won't fix" is one of the reasons offered** — it moved
+  inside, where it describes *why* rather than *what the button does*.
+- On an item **with children**, the dialog says plainly that the children are **not affected**.
+- The cancelled item can be reopened.
+- A **done** task offers no cancel — finished work is not cancelled.
+
+**Pass / Fail**
+- PASS if the wording is the same on all four and the dialog explains the children.
+- FAIL if any screen still says "Cancel task…" or "Won't fix…" on the button.
+- **FAIL if cancelling an epic also closes its children.** It must not: the platform does not
+  cascade, which is exactly what the dialog now promises.
+
+**Notes**
+- Works the same for epics and stories a person created and for ones the task-breakdown agent
+  wrote — they are the same records.
+
+---
+
+### TC-928 · A defect's state reads honestly, once
+
+**Why this case exists.** Every open defect was drawn in the failure colour, and its state was
+printed twice in two different vocabularies. Bugs S.No 327, 328, 329.
+
+**Steps**
+1. Open an **open** defect. Read the badge on the Description panel and the summary beside it.
+2. Open a defect raised by the testing loop (one with a parent).
+
+**Expected**
+- **At a glance** states the defect's own state — Proposed, In progress, Done or Cancelled —
+  exactly as a task does.
+- The header badge shows **nothing at all** while the defect is simply open. It appears only
+  when there is live news: **Fix running on your companion**, or **Waiting for your machine**.
+- So the state is stated **once**, by the row, and the badge never contradicts it.
+- **Parent** reads a work item key such as **WI-2**, or a dash — never a string of letters and
+  numbers.
+
+**Also check the summary matches the other two screens.** All three must answer the same five
+questions in the same order: **State · Artifacts · Open gates · Clarifications**, then
+**Children** on an epic or story and **Parent** on a task or defect.
+
+**Pass / Fail**
+- PASS if the state is stated once and no identifier appears anywhere.
+- **FAIL on any eight-character code in the Parent field** — that is a raw internal id.
+- **FAIL if a badge sits in the header on an idle defect.** It earns its place only while
+  something is happening.
+- FAIL if any of the three screens asks a different set of questions from the other two.
+
+**Notes**
+- The first attempt at this deleted the state row instead of narrowing the badge. The team
+  pushed back and were right — a defect has a state for the same reason a task does. Recorded
+  on Bugs S.No 328 so the reasoning is not lost.
+
+---
+
+### TC-929 · A project started from scratch is not offered codebase-reading phases
+
+**Why this case exists.** Phases & Runs offered Onboarding, Context Bridge, Context Extraction
+and Document Vision on a greenfield project, which has no existing codebase for them to read.
+Bugs S.No 330.
+
+**Steps**
+1. Open **Phases & Runs** on a **greenfield** project.
+2. Open it on a **brownfield** project.
+
+**Expected**
+- Greenfield begins at **Ideation**. None of the four appears.
+- Brownfield shows **all four**, unchanged.
+
+**Pass / Fail**
+- PASS when each project is offered what it can actually use.
+- **FAIL if brownfield loses them** — a brownfield team triggers those phases deliberately.
+
+**Notes**
+- The app already takes this position for the Onboarding *screen*, which greenfield projects do
+  not see; this screen simply never had the same rule.

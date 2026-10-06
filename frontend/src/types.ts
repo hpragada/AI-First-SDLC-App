@@ -340,8 +340,12 @@ export const PLANNING_PHASES: { key: string; label: string; tier: "plan" | "buil
   { key: "02_requirements",                  label: "Requirements",       tier: "plan" },
   { key: "03_prd",                           label: "PRD",                tier: "plan" },
   { key: "04_architecture",                  label: "Architecture",       tier: "plan" },
-  { key: "05_ux_design",                     label: "UX Design",          tier: "build" },
-  { key: "06_task_breakdown",                label: "Task Breakdown",     tier: "build" },
+  // Plan, not build. 06 is the phase that CREATES tasks — its body calls create_work_item for
+  // every epic, story and task it emits — so it can never run ON a task, and 05's wireframes
+  // are an input to 07 rather than part of it. The backend's PLAN_PHASE_KEYS is the one that
+  // decides a rail; this field is documentation and is read by nothing.
+  { key: "05_ux_design",                     label: "UX Design",          tier: "plan"  },
+  { key: "06_task_breakdown",                label: "Task Breakdown",     tier: "plan"  },
   { key: "07_implementation",                label: "Implementation",     tier: "build" },
   { key: "08_code_review",                   label: "Code Review",        tier: "build" },
   { key: "09_testing",                       label: "Testing",            tier: "build" },

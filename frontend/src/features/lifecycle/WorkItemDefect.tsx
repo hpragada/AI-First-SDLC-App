@@ -3,10 +3,11 @@ import { Link, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, ConfirmDialog, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
 import { runStatusLabel, runStatusTone } from "../../labels";
+import { artifactsForWorkItem } from "../../links";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useCompanionGate } from "../identity/CompanionGate";
-import { useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { useApprovals, useClarifications, useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 import { dispatchUnclaimed, isTerminalState } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { EditWorkItem } from "./EditWorkItem";
@@ -24,6 +25,11 @@ export function WorkItemDefect({ forceView }: { forceView?: DefectView }) {
 function WorkItemDefectLive() {
   const { id } = useParams();
   const workItem = useWorkItem(id);
+  // The same two questions the epic screen has always asked. A defect can have both: its Fix
+  // runs Implementation, so it registers artifacts, can stop to ask a question, and opens a
+  // merge gate against the defect itself.
+  const approvals = useApprovals({ work_item: id, decision: "pending" });
+  const clarifications = useClarifications({ work_item: id, status: "pending" });
   const lifecycle = useLifecycle(id);
   const runs = useRuns({ work_item: id });
   const trigger = useTriggerPhase(id);
@@ -120,27 +126,38 @@ function WorkItemDefectLive() {
             >
               {trigger.isPending ? <Spinner /> : "Trigger Fix"}
             </Button>
-            {/* Bugs S.No 140. The defect page is where "we are not going to fix this" is most
-                often decided — and cancelling a defect is what releases the gate it was
-                holding shut, so the dialog says that before anyone commits to it. */}
+            {/* Bugs S.No 140 put "Won't fix…" here, because the defect page is where "we are
+                not going to fix this" is most often decided. It stays true, and it is still
+                said — as one of the dialog's standing REASONS. What it may not do is rename
+                the action: one thing a person can do to a work item had two names depending
+                on which screen they were looking at (2026-10-06). The dialog still explains
+                that cancelling a defect releases the gate it was holding shut. */}
             <Button variant="secondary" onClick={() => setCancelOpen(true)}>
-              Won't fix…
+              Cancel work item…
             </Button>
           </span>
         )}
       </div>
-      {/* Under the action row, same reasoning as the task page: the row is a tight strip. */}
+      {/* Right-aligned, under the action row and beneath the button it is about. It used to
+          render full width from the left margin while the button it explains sat at the far
+          right of the row above — so the sentence read as a page-level announcement rather
+          than as the reason that button is grey, and the team said so on sight (2026-10-06).
+          Still OUTSIDE the row: the row is a tight horizontal strip and a sentence inside it
+          would push the buttons out of line, which is why it was moved out in the first
+          place. */}
       {companionGate.note && (
-        <div style={{ marginTop: "var(--space-2)" }}>{companionGate.note}</div>
+        <div style={{ marginTop: "var(--space-2)", textAlign: "right" }}>
+          {companionGate.note}
+        </div>
       )}
 
       <Panel
         flush
-        title="Lifecycle — Remediation"
+        title="Lifecycle — Repair"
         actions={
           cancelled ? <Badge variant="cancelled">Cancelled</Badge>
             : closed ? <Badge variant="done">Closed</Badge>
-              : <span className="t-sm u-muted">minimal rail</span>
+              : <span className="t-sm u-muted">The phases that fix this defect</span>
         }
       >
         {nodes.length === 0 ? <p className="t-sm u-muted">No phases run yet.</p> : <LifecycleRail nodes={nodes} />}
@@ -161,15 +178,20 @@ function WorkItemDefectLive() {
               the description is rendered as what it is. */}
           <Panel
             title="Description"
+            // This badge reports the RUN; "At a glance" reports the ITEM. They used to report
+            // both, in different words — the header said "Open" while the panel beside it said
+            // "Proposed", for one defect (2026-10-06). Splitting them means neither can
+            // contradict the other, and this one keeps the thing the state row cannot say: that
+            // a fix is on somebody's machine right now, or waiting for a machine that is gone.
+            //
+            // Nothing at all when the defect is simply sitting there. A badge that is always
+            // present is one nobody reads; this one appears when there is news.
             actions={
-              <Badge variant={
-                cancelled ? "cancelled" : closed ? "done"
-                  : strandedRun ? "waiting" : running ? "running" : "failed"}>
-                {cancelled ? "Cancelled"
-                  : closed ? "Closed"
-                    : strandedRun ? "Waiting for your machine"
-                      : running ? "Fix running on your companion" : "Open"}
-              </Badge>
+              strandedRun || running ? (
+                <Badge variant={strandedRun ? "waiting" : "running"}>
+                  {strandedRun ? "Waiting for your machine" : "Fix running on your companion"}
+                </Badge>
+              ) : null
             }
           >
             {workItem.data.description ? (
@@ -203,10 +225,32 @@ function WorkItemDefectLive() {
             <h3 className="t-h3" style={{ marginBottom: "var(--space-3)" }}>
               At a glance
             </h3>
+            {/* `parent`, not `parent_key`, printed eight characters of a raw UUID at a client
+                — the exact thing `parent_key` was added to prevent, and whose own comment says
+                a parent id "must never be drawn". Found in recon 2026-10-06; invisible on a
+                defect raised by hand because those have no parent, and every defect the test
+                loop raises does.
+
+                Status is gone from here as well: the badge on this panel's header already
+                states it, and the two disagreed in vocabulary — "Open" above, "Proposed"
+                here, for one defect. The badge stays because it carries more (it knows when a
+                fix is running, and when a machine is missing); this row only repeated it. */}
+            {/* The same five rows as the epic and task screens, so a person moving between
+                them is answering the same questions each time. Every one of these is real for
+                a defect — verified 2026-10-06 rather than assumed. `parent_key`, never the
+                internal id: that is what it exists for. */}
             <Kv
               rows={[
-                ["Parent", workItem.data.parent?.slice(0, 8) ?? "—"],
-                ["Status", statusLabel(workItem.data.state)],
+                ["State", statusLabel(workItem.data.state)],
+                [
+                  "Artifacts",
+                  <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
+                    {workItem.data.artifact_count ?? 0}
+                  </Link>,
+                ],
+                ["Open gates", String(approvals.data?.length ?? 0)],
+                ["Clarifications", String(clarifications.data?.length ?? 0)],
+                ["Parent", workItem.data.parent_key || "—"],
               ]}
             />
           </CardBody>
@@ -299,12 +343,12 @@ function WorkItemDefectGallery({ view }: { view: DefectView }) {
 
       <Panel
         flush
-        title="Lifecycle — Remediation"
+        title="Lifecycle — Repair"
         actions={
           view === "closed" ? (
             <Badge variant="done">Closed</Badge>
           ) : (
-            <span className="t-sm u-muted">minimal rail</span>
+            <span className="t-sm u-muted">The phases that fix this defect</span>
           )
         }
       >

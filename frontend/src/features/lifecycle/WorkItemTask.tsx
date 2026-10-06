@@ -22,7 +22,7 @@ import { ReopenWorkItem } from "./ReopenWorkItem";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useCompanionGate } from "../identity/CompanionGate";
-import { useApprovals, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
+import { useApprovals, useClarifications, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 import { artifactLink, artifactsForWorkItem, gateLink } from "../../links";
 import { useArtifactPreview } from "../observability/hooks";
 import { repoRoleLabel, workItemTypeLabel } from "../../labels";
@@ -69,6 +69,9 @@ function WorkItemTaskLive() {
   const workItem = useWorkItem(id);
   const lifecycle = useLifecycle(id);
   const approvals = useApprovals({ work_item: id, decision: "pending" });
+  // A task's phases can stop to ask a question exactly as a planning phase can — clarifications
+  // attach to whatever work item the run belongs to, with no restriction by type.
+  const clarifications = useClarifications({ work_item: id, status: "pending" });
   const runs = useRuns({ work_item: id });
   const decideApproval = useDecideApproval();
   const trigger = useTriggerPhase(id);
@@ -204,23 +207,31 @@ function WorkItemTaskLive() {
               </Button>
               {!done && (
                 <Button variant="secondary" onClick={() => setCancelOpen(true)}>
-                  Cancel task…
+                  Cancel work item…
                 </Button>
               )}
             </>
           )}
         </span>
       </div>
-      {/* Under the action row rather than inside it: the row is a tight horizontal strip of
-          buttons, and a sentence in there would push them out of line. */}
+      {/* Right-aligned, under the action row and beneath the button it is about. It used to
+          render full width from the left margin while the button it explains sat at the far
+          right of the row above — so the sentence read as a page-level announcement rather
+          than as the reason that button is grey, and the team said so on sight (2026-10-06).
+          Still OUTSIDE the row: the row is a tight horizontal strip and a sentence inside it
+          would push the buttons out of line, which is why it was moved out in the first
+          place. */}
       {!cancelled && companionGate.note && (
-        <div style={{ marginTop: "var(--space-2)" }}>{companionGate.note}</div>
+        <div style={{ marginTop: "var(--space-2)", textAlign: "right" }}>
+          {companionGate.note}
+        </div>
       )}
 
       <Panel
         flush
         title="Lifecycle — Delivery"
-        actions={<span className="t-sm u-muted">Task · build phases only</span>}
+        // See the note on the epic's caption: a sentence about this item, not a label.
+        actions={<span className="t-sm u-muted">The phases that deliver this task</span>}
       >
         {nodes.length === 0 ? (
           <p className="t-sm u-muted">No phases run yet.</p>
@@ -339,6 +350,8 @@ function WorkItemTaskLive() {
                     </Link>,
                   ],
                   ["Open gates", String(approvals.data?.length ?? 0)],
+                  ["Clarifications", String(clarifications.data?.length ?? 0)],
+                  ["Parent", workItem.data.parent_key || "—"],
                 ]}
               />
             </CardBody>
@@ -526,7 +539,7 @@ function WorkItemTaskGallery({ view }: { view: TaskView }) {
         flush
         title="Lifecycle — Delivery"
         actions={
-          view !== "loop-failed" && <span className="t-sm u-muted">Task · build phases only</span>
+          view !== "loop-failed" && <span className="t-sm u-muted">The phases that deliver this task</span>
         }
       >
         <LifecycleRail

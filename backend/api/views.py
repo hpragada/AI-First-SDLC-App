@@ -48,7 +48,12 @@ from apps.projects.repos import (
     update_repository,
 )
 from apps.registry.catalog import ACTIVE_AGENT_CATALOG as _ACTIVE_CATALOG
-from apps.registry.catalog import gate_role_for
+from apps.registry.catalog import (
+    BUILD_PHASE_KEYS,
+    PHASE_KEYS_BY_TIER,
+    PLAN_PHASE_KEYS,
+    gate_role_for,
+)
 from apps.registry.catalog import get_by_key as _catalog_get
 from apps.registry.catalog import rides_build as catalog_rides_build
 from apps.registry.models import AgentSpec, Artifact, TraceEdge
@@ -2256,9 +2261,13 @@ class WorkItemViewSet(
         Tier is determined by work-item type; nodes come from the tenant's AgentSpec registry."""
         work_item = self.get_object()
 
-        # Tier mapping by work-item type
-        tier_map = {"epic": "plan", "story": "plan", "task": "build", "defect": "remediation"}
+        # Tier mapping by work-item type. `test_case` is delivered like a task; anything
+        # unknown plans, because a rail showing too much is survivable and one showing nothing
+        # is not.
+        tier_map = {"epic": "plan", "story": "plan", "task": "build",
+                    "test_case": "build", "defect": "remediation"}
         tier = tier_map.get(work_item.type, "plan")
+        tier_keys = PHASE_KEYS_BY_TIER.get(tier, PLAN_PHASE_KEYS)
 
         # All runs for this work-item indexed by agent_spec key
         runs_by_key: dict[str, Run] = {}
@@ -2294,6 +2303,12 @@ class WorkItemViewSet(
             ]
         else:
             specs_data = [{"key": s.key, "label": s.phase_label or s.key} for s in specs]
+
+        # The line this endpoint has been missing since it was written: `tier` was worked out
+        # from the work item's type and then never used, so every type rendered every phase
+        # while each caption promised otherwise (2026-10-06). An epic plans, a task builds, a
+        # defect repairs.
+        specs_data = [sp for sp in specs_data if sp["key"] in tier_keys]
 
         run_status_to_node_state = {
             "running": "running",
@@ -3139,14 +3154,12 @@ class ClarificationViewSet(TenantScopedMixin, viewsets.ReadOnlyModelViewSet):
 # Plan  : onboarding/context phases (00_*) + strategy phases (01_–04_).
 # Build : implementation, quality, ops phases (05_–12_).
 # Remediation: reserved (none in current catalog — defect/hotfix phases added later).
-_PLAN_KEYS = frozenset(
-    d.key for d in _ACTIVE_CATALOG
-    if d.key[:2] in ("00", "01", "02", "03", "04")
-)
-_BUILD_KEYS = frozenset(
-    d.key for d in _ACTIVE_CATALOG
-    if d.key[:2] in ("05", "06", "07", "08", "09", "10", "11", "12")
-)
+# Was parsed from each key's leading digits here; now named in the catalog beside the agents
+# themselves, because the same question is asked by the lifecycle rail and the two answers had
+# already drifted. The prefix rule also mis-filed UX Design and Task Breakdown as build work —
+# see the note on PLAN_PHASE_KEYS.
+_PLAN_KEYS = PLAN_PHASE_KEYS
+_BUILD_KEYS = BUILD_PHASE_KEYS
 
 
 def _catalog_entry(key: str, label: str, gate_role: str) -> dict:
