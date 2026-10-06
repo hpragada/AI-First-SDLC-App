@@ -94,7 +94,18 @@ Legend — endpoints: `4.7-Tn` = Phase 4.7 task; `B` = Phase 4.8 bucket-B; `(exi
   show plan phases on a task (the §6.0 rule in the journeys spec). **A `story` is a planning item** —
   settled 2026-09-21 (Screen Words group 9, Option A): the endpoint's `plan` for a story is right and
   the journeys spec was corrected to match. Rail headings read "Lifecycle — Planning" and
-  "Lifecycle — Delivery"; the word "tier" is not shown.
+  "Lifecycle — Delivery"; the word "tier" is not shown. A phase that has not started reads
+  **"Not started"**, never "Upcoming" — the hollow numbered circle already says "not yet", and on a
+  new work item that word repeated under all nine phases (Bugs S.No 335).
+- **"At a glance" (S-15/16/17) is one card with one set of rows**, built from the shared helpers in
+  `features/lifecycle/glance.tsx` — three hand-written copies is how the three screens drifted into
+  asking three different sets of questions (Bugs S.No 331). Two rules it encodes: **a count is a link
+  only above zero** (a zero that leads to "Nothing matched this filter" reads as a failure when the
+  work item has simply not run — S.No 333), and **the clarification count is "Open clarifications"**,
+  because the query behind it has only ever asked for `status=pending`; the answered history lives on
+  the Clarifications screen's History tab, which is phase-aware (S.No 334). The count links to
+  `/clarifications?work_item=…`, which narrows the **pending list only** — narrowing a history by an
+  invisible filter is the more dangerous of the two.
 - **S-33/S-34 new endpoints** are the only net-new backend in Phase 4.8 beyond bucket B — decided this
   session (DECISION-7 persist transcript read; DECISION-8 manual gate-respecting publish). Their
   contracts are stubbed in the 4.8 spec §3; build the read/publish endpoints alongside the screen.

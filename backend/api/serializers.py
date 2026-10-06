@@ -1020,11 +1020,16 @@ class ClarificationSerializer(serializers.ModelSerializer):
     # on ApprovalSerializer so the two history screens can say the same things the same way.
     answered_by_name = serializers.SerializerMethodField()
     work_item_title = serializers.SerializerMethodField()
+    # The READABLE key — "WI-3". The clarifications screen had only the internal id and the
+    # title, so it drew eight characters of a uuid beside every question. A key is what the
+    # work item exists to be referred to by; a uuid fragment is not something anyone can use.
+    work_item_key = serializers.SerializerMethodField()
 
     class Meta:
         model = Clarification
         fields = [
-            "id", "run", "run_status", "work_item", "work_item_title", "phase", "status",
+            "id", "run", "run_status", "work_item", "work_item_title", "work_item_key",
+            "phase", "status",
             "questions", "answers", "context", "answered_by", "answered_by_name",
             "answered_at", "created_at",
         ]
@@ -1035,6 +1040,11 @@ class ClarificationSerializer(serializers.ModelSerializer):
 
     def get_work_item_title(self, obj) -> str | None:
         return getattr(obj.work_item, "title", None) if obj.work_item_id else None
+
+    def get_work_item_key(self, obj) -> str | None:
+        """None for a run on a hidden carrier work item, which has no key — the screen then
+        shows the title alone rather than falling back to an identifier."""
+        return getattr(obj.work_item, "key", None) if obj.work_item_id else None
 
 
 class ClarificationAnswerSerializer(serializers.Serializer):

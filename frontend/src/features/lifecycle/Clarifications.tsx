@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext";
 import {
@@ -25,6 +25,7 @@ import {
   useAnswerClarification,
   useClarificationHistory,
   useClarifications,
+  useWorkItem,
   useWorkItems,
 } from "./hooks";
 import { phaseLabel } from "./phases";
@@ -283,7 +284,16 @@ function ClarificationsLive() {
   // report — has no row in `useWorkItems` (`carrier_q` excludes them by design), so filtering
   // on it hid exactly the questions nobody else can answer and left those runs waiting for
   // ever. Hiding plumbing from a board is right; hiding a question that blocks a run is not.
-  const clarifications = useClarifications({ status: "pending", project: projectId });
+  // Arrives only in a link, from a work item's "At a glance" card — so the URL is its only
+  // source, exactly as the artifact registry treats its own scopes.
+  const [searchParams] = useSearchParams();
+  const workItemScope = searchParams.get("work_item") ?? "";
+  const scopedItem = useWorkItem(workItemScope || undefined);
+  const clarifications = useClarifications({
+    status: "pending",
+    project: projectId,
+    ...(workItemScope ? { work_item: workItemScope } : {}),
+  });
   const answer = useAnswerClarification();
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   // Free text typed against an "Other (please specify)" choice, keyed by question id.
@@ -322,10 +332,12 @@ function ClarificationsLive() {
   // already resolves `work_item_title` for every clarification, including the ones whose work
   // item is hidden plumbing — so a judging run's question reads "Accessibility judging" instead
   // of a bare uuid, which is the whole reason the lookup existed.
+  // The readable key, never the internal id. This used to print eight characters of a uuid
+  // beside every question — the same thing the defect screen was printing as its parent. A
+  // clarification whose work item is hidden plumbing has a title but no key, and a title alone
+  // reads better than a fragment of an identifier nobody can use.
   const workItemLabel = (c: Clarification) =>
-    c.work_item_title
-      ? `${c.work_item.slice(0, 8)} · ${c.work_item_title}`
-      : c.work_item.slice(0, 8);
+    [c.work_item_key, c.work_item_title].filter(Boolean).join(" · ") || "Work item";
 
   // The answer actually submitted for a question. For a choice where the selected option is
   // the "Other (please specify)" one, that's the free text the user typed — not the literal
@@ -453,6 +465,23 @@ function ClarificationsLive() {
         active={tab}
         onSelect={(id) => setTab(id as "pending" | "history")}
       />
+
+      {/* Arrived from one work item's "At a glance" card. Without this notice, seeing two
+          questions here would reasonably read as "the project has two" while another work item
+          sat with five. Mirrors the artifact registry's scope notice, which this screen's
+          readers have already met. The HISTORY tab is deliberately left project-wide. */}
+      {workItemScope && tab !== "history" && (
+        <Banner variant="info" title="Showing questions for one work item">
+          <p className="t-sm">
+            {[scopedItem.data?.key, scopedItem.data?.title].filter(Boolean).join(" · ") ||
+              "One work item"}
+            . Other work items may have questions waiting too.
+          </p>
+          <Link to="/clarifications" className="btn btn--secondary btn--sm">
+            Show all questions
+          </Link>
+        </Banner>
+      )}
 
       {/* Not on the history tab (S.No 319). The whole job of this notice is to send you to the
           answered history; once you are there it has nothing left to say, and its button —

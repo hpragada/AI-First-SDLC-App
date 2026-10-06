@@ -164,7 +164,7 @@ function renderDetail(element: React.ReactElement) {
 const EMPTY_LIFECYCLE = { nodes: [], loops: [], children: [] };
 
 describe("every work item screen answers the same questions", () => {
-  const rows = ["State", "Artifacts", "Open gates", "Clarifications"];
+  const rows = ["State", "Artifacts", "Open gates", "Open clarifications"];
 
   it("on a task", async () => {
     stubDetail({ "/lifecycle": EMPTY_LIFECYCLE, "/work-items/": item({ parent_key: "WI-2" }) });
@@ -225,5 +225,67 @@ describe("the rails say what they are for", () => {
     expect(container.textContent).toContain("The phases that fix this defect");
     expect(container.textContent).not.toContain("minimal rail");
     expect(container.textContent).not.toContain("Remediation");
+  });
+});
+
+// ── "At a glance" counts: a link only when there is something to open ───────
+//
+// Found 2026-10-06 by the team: the artifact count was a link even at zero, and clicking it
+// landed on "Nothing matched this filter" — a failure message for a work item that had simply
+// not produced anything. The clarification count carried the opposite problem: it has always
+// counted PENDING questions only, under a label that named the category.
+import { clarificationsForWorkItem } from "../../links";
+
+describe("the counts on the summary card", () => {
+  it("does not link a zero artifact count", async () => {
+    stubDetail({ "/lifecycle": EMPTY_LIFECYCLE, "/work-items/": item({ artifact_count: 0 }) });
+    const { container } = renderDetail(<WorkItemTask />);
+    await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
+    const links = Array.from(container.querySelectorAll("a"));
+    expect(links.some((a) => a.getAttribute("href")?.includes("/artifacts"))).toBe(false);
+  });
+
+  it("links an artifact count above zero", async () => {
+    stubDetail({ "/lifecycle": EMPTY_LIFECYCLE, "/work-items/": item({ artifact_count: 7 }) });
+    const { container } = renderDetail(<WorkItemTask />);
+    await waitFor(() => expect(screen.getByText("7")).toBeDefined());
+    const links = Array.from(container.querySelectorAll("a"));
+    expect(links.some((a) => a.getAttribute("href")?.includes("/artifacts"))).toBe(true);
+  });
+
+  it("says OPEN clarifications, because that is what the number counts", async () => {
+    stubDetail({ "/lifecycle": EMPTY_LIFECYCLE, "/work-items/": item() });
+    const { container } = renderDetail(<WorkItemTask />);
+    await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
+    expect(container.textContent).toContain("Open clarifications");
+  });
+
+  it("points an open clarification at the questions for this work item alone", async () => {
+    stubDetail({
+      "/lifecycle": EMPTY_LIFECYCLE,
+      "/clarifications": [{ id: "c1", run: "r1", work_item: "wi-1", phase: "07_implementation",
+                           status: "pending", questions: [], answers: {} }],
+      "/work-items/": item(),
+    });
+    const { container } = renderDetail(<WorkItemTask />);
+    await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
+    const href = clarificationsForWorkItem("wi-1");
+    await waitFor(() =>
+      expect(Array.from(container.querySelectorAll("a"))
+        .some((a) => a.getAttribute("href") === href)).toBe(true));
+  });
+});
+
+describe("the lifecycle rail", () => {
+  it("does not promise the future under every phase", async () => {
+    stubDetail({
+      "/lifecycle": { nodes: [{ phase: "07_implementation", label: "Implementation",
+                                state: "not_started" }], loops: [], children: [] },
+      "/work-items/": item(),
+    });
+    const { container } = renderDetail(<WorkItemTask />);
+    await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
+    expect(container.textContent).toContain("Not started");
+    expect(container.textContent).not.toContain("Upcoming");
   });
 });

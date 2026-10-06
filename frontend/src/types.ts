@@ -276,6 +276,8 @@ export interface Clarification {
   // Resolved names for the history view, which is read back long after the fact — an id and a
   // raw uuid don't tell you what you decided or who decided it.
   work_item_title?: string | null;
+  // The readable key, "WI-3". Absent on a hidden carrier work item, which has none.
+  work_item_key?: string | null;
   phase: string;
   status: string; // "pending" | "answered" | "cancelled"
   questions: ClarificationQuestion[];

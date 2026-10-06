@@ -28,7 +28,11 @@ export function railNodeView(node: LifecycleNode, index: number, stateText?: str
     default:
       return {
         label: node.label,
-        state: stateText ?? "Upcoming",
+        // "Not started", never "Upcoming". A brand-new work item has not started ANY phase, so
+        // the rail printed the same word under all nine of them — nine repetitions of what the
+        // hollow numbered circle already says. "Not started" at least states a fact about the
+        // phase rather than making a promise about the future.
+        state: stateText ?? "Not started",
         tone: "upcoming",
         mark: index + 1,
       };

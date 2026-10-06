@@ -1510,7 +1510,7 @@ printed twice in two different vocabularies. Bugs S.No 327, 328, 329.
   numbers.
 
 **Also check the summary matches the other two screens.** All three must answer the same five
-questions in the same order: **State · Artifacts · Open gates · Clarifications**, then
+questions in the same order: **State · Artifacts · Open gates · Open clarifications**, then
 **Children** on an epic or story and **Parent** on a task or defect.
 
 **Pass / Fail**
@@ -1548,3 +1548,99 @@ Bugs S.No 330.
 **Notes**
 - The app already takes this position for the Onboarding *screen*, which greenfield projects do
   not see; this screen simply never had the same rule.
+
+
+---
+
+### TC-930 · A count of zero is not a link
+
+**Why this case exists.** The Artifacts count on the summary card was a link whether or not
+there was anything to open. Clicking a zero landed on the registry's *"Nothing matched this
+filter"* — a failure message for a work item that had simply not produced anything yet.
+Bugs S.No 333.
+
+**Steps**
+1. Open a work item that has produced **nothing** — a task or defect just created.
+2. Look at **At a glance** and try to click each count.
+3. Open a work item that **has** documents — an epic whose Ideation run completed.
+4. Click its Artifacts count.
+
+**Expected**
+- On the new item every count is plain grey text. Nothing is clickable.
+- On the finished item the Artifacts count is a link and opens the registry filtered to it.
+
+**Pass / Fail**
+- PASS when a number is a link exactly when there is something on the other end of it.
+- **FAIL if any zero can be clicked**, on any of the three screens.
+
+---
+
+### TC-931 · The summary card says *open* clarifications
+
+**Why this case exists.** The card has only ever counted **unanswered** questions, under a label
+that named the category. A completed work item that was asked six questions and answered all six
+read "Clarifications 0" — which says it was never asked anything. Bugs S.No 334.
+
+**Steps**
+1. Open a completed work item whose run asked questions you answered.
+2. Read the row.
+3. Trigger a phase that pauses to ask something, and return to the work item.
+4. Click the count.
+
+**Expected**
+- The row reads **Open clarifications**, and reads 0 on the completed item — correctly, because
+  nothing is waiting.
+- While a question waits, the count is above zero and is a link.
+- The link opens Clarifications with a blue notice naming the work item in words
+  (`WI-3 · PeopleDesk-PRD`) and a **Show all questions** button.
+
+**Pass / Fail**
+- PASS when the number and the word agree.
+- **FAIL if the notice is missing** — without it, two questions here reads as "the project has
+  two" while another work item sits with five.
+- **FAIL if the History tab is also narrowed.** A history filtered by something you cannot see
+  is the more dangerous of the two.
+
+---
+
+### TC-932 · The lifecycle rail does not say "Upcoming" nine times
+
+**Why this case exists.** Every phase that had not started printed "Upcoming" — on a new work
+item that is every phase, so the rail repeated one word nine times while the hollow numbered
+circle already said it. Bugs S.No 335.
+
+**Steps**
+1. Create a work item and open it.
+2. Run a phase to completion and look again.
+
+**Expected**
+- Every phase reads **Not started**. The word "Upcoming" appears nowhere in the app.
+- Done, Running, Needs answer, Gate pending and Failed are unchanged — those are the states the
+  circle alone cannot explain.
+
+**Pass / Fail**
+- PASS when the rail says "Not started" and the finished phase still says "Done".
+- **FAIL if a completed or running phase lost its word.**
+
+---
+
+### TC-933 · No internal id beside a question
+
+**Why this case exists.** The Clarifications screen printed eight characters of the work item's
+internal id beside every question — the same thing the defect screen was doing with its parent.
+Found in recon, not reported. Bugs S.No 336.
+
+**Steps**
+1. Open **Clarifications** with at least one question waiting.
+2. Read the label above each question, and the same label in the **History** tab.
+
+**Expected**
+- Each reads `WI-3 · PeopleDesk-PRD`.
+- A question from a hidden carrier work item — accessibility judging, code indexing — shows its
+  **title alone**, because it has no key.
+
+**Pass / Fail**
+- PASS when nothing on screen is an identifier.
+- **FAIL on any eight-character code.**
+- **FAIL if a carrier work item's question disappears or shows a blank label** — those are the
+  questions nobody else can answer.

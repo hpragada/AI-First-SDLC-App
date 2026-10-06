@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 
 import { Badge, Banner, Breadcrumb, Button, Card, CardBody, ConfirmDialog, Kv, LifecycleRail, Markdown, Panel, Spinner } from "../../components/ui";
 import { runStatusLabel, runStatusTone } from "../../labels";
-import { artifactsForWorkItem } from "../../links";
+import { artifactsForWorkItem, clarificationsForWorkItem } from "../../links";
+import { countCell } from "./glance";
 import { railNodeView } from "./railView";
 import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useCompanionGate } from "../identity/CompanionGate";
@@ -244,12 +245,15 @@ function WorkItemDefectLive() {
                 ["State", statusLabel(workItem.data.state)],
                 [
                   "Artifacts",
-                  <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
-                    {workItem.data.artifact_count ?? 0}
-                  </Link>,
+                  countCell(workItem.data.artifact_count ?? 0,
+                            artifactsForWorkItem(workItem.data.id)),
                 ],
                 ["Open gates", String(approvals.data?.length ?? 0)],
-                ["Clarifications", String(clarifications.data?.length ?? 0)],
+                [
+                  "Open clarifications",
+                  countCell(clarifications.data?.length ?? 0,
+                            clarificationsForWorkItem(workItem.data.id)),
+                ],
                 ["Parent", workItem.data.parent_key || "—"],
               ]}
             />
@@ -299,13 +303,13 @@ function WorkItemDefectGallery({ view }: { view: DefectView }) {
   const nodes = {
     open: [
       { label: "Fix", state: "Open", tone: "current" as const, mark: "●" },
-      { label: "Review", state: "Upcoming", tone: "upcoming" as const, mark: 2 },
-      { label: "Test", state: "Upcoming", tone: "upcoming" as const, mark: 3 },
+      { label: "Review", state: "Not started", tone: "upcoming" as const, mark: 2 },
+      { label: "Test", state: "Not started", tone: "upcoming" as const, mark: 3 },
     ],
     fixing: [
       { label: "Fix", state: "Running", tone: "running" as const, mark: "" },
-      { label: "Review", state: "Upcoming", tone: "upcoming" as const, mark: 2 },
-      { label: "Test", state: "Upcoming", tone: "upcoming" as const, mark: 3 },
+      { label: "Review", state: "Not started", tone: "upcoming" as const, mark: 2 },
+      { label: "Test", state: "Not started", tone: "upcoming" as const, mark: 3 },
     ],
     closed: [
       { label: "Fix", state: "Patched", tone: "done" as const, mark: "✓" },

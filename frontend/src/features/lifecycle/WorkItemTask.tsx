@@ -19,11 +19,12 @@ import {
 import { CancelWorkItem } from "./CancelWorkItem";
 import { EditWorkItem } from "./EditWorkItem";
 import { ReopenWorkItem } from "./ReopenWorkItem";
+import { countCell } from "./glance";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useCompanionGate } from "../identity/CompanionGate";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, usePatchWorkItem, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
-import { artifactLink, artifactsForWorkItem, gateLink } from "../../links";
+import { artifactLink, artifactsForWorkItem, clarificationsForWorkItem, gateLink } from "../../links";
 import { useArtifactPreview } from "../observability/hooks";
 import { repoRoleLabel, workItemTypeLabel } from "../../labels";
 import { roleLabel } from "../identity/roles";
@@ -345,12 +346,18 @@ function WorkItemTaskLive() {
                   // and left you to find them in the registry by hand.
                   [
                     "Artifacts",
-                    <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
-                      {workItem.data.artifact_count ?? 0}
-                    </Link>,
+                    countCell(workItem.data.artifact_count ?? 0,
+                              artifactsForWorkItem(workItem.data.id)),
                   ],
                   ["Open gates", String(approvals.data?.length ?? 0)],
-                  ["Clarifications", String(clarifications.data?.length ?? 0)],
+                  // "Open" because the query asks for pending only. Without the word, a
+                  // finished work item that answered six questions reads "Clarifications 0",
+                  // which says it was never asked anything.
+                  [
+                    "Open clarifications",
+                    countCell(clarifications.data?.length ?? 0,
+                              clarificationsForWorkItem(workItem.data.id)),
+                  ],
                   ["Parent", workItem.data.parent_key || "—"],
                 ]}
               />
@@ -483,13 +490,13 @@ function WorkItemTaskGallery({ view }: { view: TaskView }) {
       { label: "Implementation", state: "PR #218", tone: "done" as const, mark: "✓" },
       { label: "Review", state: "Clean", tone: "done" as const, mark: "✓" },
       { label: "Test", state: "Defect WI-547", tone: "failed" as const, mark: "!" },
-      { label: "Merge", state: "Upcoming", tone: "upcoming" as const, mark: 4 },
+      { label: "Merge", state: "Not started", tone: "upcoming" as const, mark: 4 },
     ],
     running: [
       { label: "Implementation", state: "Running", tone: "running" as const, mark: "" },
-      { label: "Review", state: "Upcoming", tone: "upcoming" as const, mark: 2 },
-      { label: "Test", state: "Upcoming", tone: "upcoming" as const, mark: 3 },
-      { label: "Merge", state: "Upcoming", tone: "upcoming" as const, mark: 4 },
+      { label: "Review", state: "Not started", tone: "upcoming" as const, mark: 2 },
+      { label: "Test", state: "Not started", tone: "upcoming" as const, mark: 3 },
+      { label: "Merge", state: "Not started", tone: "upcoming" as const, mark: 4 },
     ],
     "merge-gate": [
       { label: "Implementation", state: "PR #218", tone: "done" as const, mark: "✓" },

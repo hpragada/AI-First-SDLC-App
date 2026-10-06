@@ -490,6 +490,27 @@ def test_history_carries_the_answerer_name_and_work_item_title(world):
     assert row["work_item_title"] == "Leave balance ledger"   # no backlog cross-reference
 
 
+def test_a_clarification_carries_the_readable_work_item_key(world):
+    """Found 2026-10-06: the clarifications screen drew eight characters of the work item's
+    internal id beside every question, because the key was the one thing the serializer did not
+    send. Nobody can use a uuid fragment; "WI-3" is what the key exists to be."""
+    client = APIClient()
+    row = client.get(f"/api/clarifications/?work_item={world['wi_id']}",
+                     **_hdr(world["tenant_id"])).json()[0]
+    assert row["work_item_key"].startswith("WI-")
+
+
+def test_clarifications_can_be_narrowed_to_one_work_item(world):
+    """What the "Open clarifications" count on a work item's summary card now links to."""
+    client = APIClient()
+    hit = client.get(f"/api/clarifications/?status=pending&work_item={world['wi_id']}",
+                     **_hdr(world["tenant_id"]))
+    miss = client.get(f"/api/clarifications/?status=pending&work_item={uuid.uuid4()}",
+                      **_hdr(world["tenant_id"]))
+    assert len(hit.json()) >= 1
+    assert miss.json() == []
+
+
 def test_search_matches_question_text_answer_text_and_context(world):
     """Search is server-side because the list is paged: searching in the browser would search
     only the visible page while appearing to search everything. It has to reach the question

@@ -238,7 +238,7 @@ export function DevComponents() {
               { label: "Requirements", state: "Approved", tone: "done", mark: "✓" },
               { label: "PRD", state: "Approved", tone: "done", mark: "✓" },
               { label: "Architecture", state: "Gate Pending", tone: "current", mark: "●" },
-              { label: "UX Design", state: "Upcoming", tone: "upcoming", mark: "5" },
+              { label: "UX Design", state: "Not started", tone: "upcoming", mark: "5" },
             ]}
           />
           <LifecycleRail
@@ -248,7 +248,7 @@ export function DevComponents() {
               { label: "Implementation", state: "PR #218", tone: "done", mark: "✓" },
               { label: "Review", state: "Running", tone: "running", mark: "" },
               { label: "Test", state: "Defect WI-547", tone: "failed", mark: "!" },
-              { label: "Merge", state: "Upcoming", tone: "upcoming", mark: "4" },
+              { label: "Merge", state: "Not started", tone: "upcoming", mark: "4" },
             ]}
           />
         </Section>

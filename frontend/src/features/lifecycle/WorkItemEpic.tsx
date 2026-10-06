@@ -16,10 +16,11 @@ import { isInternalStream } from "../../types";
 import { CancelWorkItem } from "./CancelWorkItem";
 import { EditWorkItem } from "./EditWorkItem";
 import { ReopenWorkItem } from "./ReopenWorkItem";
+import { countCell } from "./glance";
 import { railNodeView } from "./railView";
 import { gateLabel, phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
 import { useApprovals, useClarifications, useDecideApproval, useLifecycle, useRuns, useWorkItem } from "./hooks";
-import { artifactsForWorkItem, clarificationLink, gateLink } from "../../links";
+import { artifactsForWorkItem, clarificationsForWorkItem, clarificationLink, gateLink } from "../../links";
 import { roleLabel } from "../identity/roles";
 
 function typeLabel(type: string): string {
@@ -235,12 +236,15 @@ function WorkItemEpicLive() {
                   // and left you to find them in the registry by hand.
                   [
                     "Artifacts",
-                    <Link to={artifactsForWorkItem(workItem.data.id)} key="a">
-                      {workItem.data.artifact_count ?? 0}
-                    </Link>,
+                    countCell(workItem.data.artifact_count ?? 0,
+                              artifactsForWorkItem(workItem.data.id)),
                   ],
                   ["Open gates", String(approvals.data?.length ?? 0)],
-                  ["Clarifications", String(clarifications.data?.length ?? 0)],
+                  [
+                    "Open clarifications",
+                    countCell(clarifications.data?.length ?? 0,
+                              clarificationsForWorkItem(workItem.data.id)),
+                  ],
                   ["Children", String(lifecycle.data?.children.length ?? 0)],
                 ]}
               />
@@ -280,17 +284,17 @@ const GATE_PENDING_NODES = [
   { label: "Requirements", state: "Approved", tone: "done" as const, mark: "✓" },
   { label: "PRD", state: "Approved", tone: "done" as const, mark: "✓" },
   { label: "Architecture", state: "Gate Pending", tone: "current" as const, mark: "●" },
-  { label: "UX Design", state: "Upcoming", tone: "upcoming" as const, mark: 5 },
-  { label: "Task Breakdown", state: "Upcoming", tone: "upcoming" as const, mark: 6 },
+  { label: "UX Design", state: "Not started", tone: "upcoming" as const, mark: 5 },
+  { label: "Task Breakdown", state: "Not started", tone: "upcoming" as const, mark: 6 },
 ];
 
 const NEEDS_ANSWER_NODES = [
   { label: "Ideation", state: "Approved", tone: "done" as const, mark: "✓" },
   { label: "Requirements", state: "Approved", tone: "done" as const, mark: "✓" },
   { label: "PRD", state: "Needs answer", tone: "needs" as const, mark: "?" },
-  { label: "Architecture", state: "Upcoming", tone: "upcoming" as const, mark: 4 },
-  { label: "UX Design", state: "Upcoming", tone: "upcoming" as const, mark: 5 },
-  { label: "Task Breakdown", state: "Upcoming", tone: "upcoming" as const, mark: 6 },
+  { label: "Architecture", state: "Not started", tone: "upcoming" as const, mark: 4 },
+  { label: "UX Design", state: "Not started", tone: "upcoming" as const, mark: 5 },
+  { label: "Task Breakdown", state: "Not started", tone: "upcoming" as const, mark: 6 },
 ];
 
 const COMPLETE_NODES = [

@@ -54,6 +54,13 @@ export const a11yFindingInReviewLink = (findingId: string) =>
  *  old one. */
 export const artifactsForRun = (runId: string) => withParams("/artifacts", { run: runId });
 
+/** Every question still waiting for an answer on ONE work item. The "At a glance" card counts
+ *  them; without this there was nowhere for that count to lead, so it was the one number on the
+ *  card that could not be acted on. The screen narrows its PENDING list only — a history
+ *  narrowed by a filter you cannot see is the more dangerous of the two. */
+export const clarificationsForWorkItem = (workItemId: string) =>
+  withParams("/clarifications", { work_item: workItemId });
+
 /** Everything a PHASE produced.
  *
  *  **`phaseLabel` must be the phase LABEL, never an agent key.** `Artifact.phase` stores the
