@@ -126,8 +126,9 @@ describe("highlighting one work item", () => {
     await waitFor(() => expect(drawn().length).toBe(4));
     const highlight = screen.getByLabelText("Highlight work item") as HTMLSelectElement;
     const options = [...highlight.options].map((o) => o.textContent);
-    expect(options).toContain("WI-152 Currency rounding rule");
-    expect(options).toContain("WI-158 Saved cards");
+    expect(options[0]).toBe("Highlight: All work items");
+    expect(options).toContain("Highlight: WI-152 Currency rounding rule");
+    expect(options).toContain("Highlight: WI-158 Saved cards");
     expect(document.body.textContent).not.toContain("WI-492");
   });
 
@@ -154,7 +155,7 @@ describe("highlighting one work item", () => {
 
     await waitFor(() => expect(drawn().length).toBe(4));
     await user.selectOptions(screen.getByLabelText("Highlight work item"),
-                             screen.getByRole("option", { name: "Not tied to a work item" }));
+                             screen.getByRole("option", { name: "Highlight: Not tied to a work item" }));
 
     expect(isDim("Legacy spec.pdf")).toBe(false);
     expect(isDim("PRD — Currency rounding")).toBe(true);
@@ -165,7 +166,29 @@ describe("highlighting one work item", () => {
     renderWithProviders(<TraceabilityView />);
 
     await waitFor(() => expect(drawn().length).toBe(3));
-    expect(screen.queryByRole("option", { name: "Not tied to a work item" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "Highlight: Not tied to a work item" })).toBeNull();
+  });
+});
+
+describe("the map's boxes and legend (2026-10-08)", () => {
+  it("puts the whole name in the box for the browser to wrap, never a letter-count cut", async () => {
+    const long = "PeopleDesk — Market Sizing & Organizational Value";
+    stub([{ ...NODES[0], title: long }]);
+    renderWithProviders(<TraceabilityView />);
+
+    await waitFor(() => expect(drawn().length).toBe(1));
+    const title = document.querySelector(".gnode__title") as HTMLElement;
+    expect(title.textContent).toBe(long);
+    expect(document.body.textContent).not.toContain("PeopleDesk — Market Si…");
+  });
+
+  it("explains only the statuses that are on the map", async () => {
+    stub(NODES.map((n) => ({ ...n, status: "published" })));
+    renderWithProviders(<TraceabilityView />);
+
+    await waitFor(() => expect(drawn().length).toBe(4));
+    const legend = document.querySelector(".graph-legend") as HTMLElement;
+    expect(legend.textContent).toBe("Published");
   });
 });
 

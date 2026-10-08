@@ -931,6 +931,15 @@ a.companion-pill:hover { filter: brightness(1.08); }
 .graph-legend__dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 /* graph node (SVG <g>/<foreignObject> content uses these via inline style tokens) */
 .gnode { fill: var(--bg-surface); stroke: var(--border-strong); }
+/* Traceability node text (2026-10-08): the name wraps to two lines and is cut with "…" inside
+   the box; the status line is one line. Measured by the browser, not by counting letters. */
+.gnode__text { display: flex; flex-direction: column; gap: 2px; height: 100%; justify-content: center;
+  font-family: var(--font-sans); pointer-events: none; }
+.gnode__title { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--text-strong);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere; }
+.gnode__detail { font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
 .gedge { stroke: var(--border-strong); stroke-width: 1.5; fill: none; }
 
 /* trigger-phase button cluster (Phases & Runs) */

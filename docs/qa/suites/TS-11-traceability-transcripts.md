@@ -609,3 +609,65 @@ added by the pack audit continue at **TC-251**, which collides with nothing.
   it puts on record that the `/transcripts` empty state is also indistinguishable from a failure,
   so a tester who sees it must confirm the backend is up before concluding "Tester C has run
   nothing".
+
+---
+
+### TC-944 · Every name sits inside its box on the map
+
+**Why this case exists.** Boxes were a fixed width and names were cut by counting 22 letters, which
+at that font is wider than the box, so names ran past the border. Bugs S.No 352.
+
+**Steps**
+1. Open **Traceability** on a project with documents that have long names
+   (e.g. "PeopleDesk — Market Sizing & Organizational Value").
+2. Hover a box.
+
+**Expected**
+- Three boxes per row. Each name wraps onto a second line if it needs to, and ends in "…" only when
+  it is longer than two lines.
+- No text crosses a box's border.
+- Hovering shows the full name and its phase and status.
+
+**Pass / Fail**
+- **FAIL on any text outside its border.**
+
+---
+
+### TC-945 · The legend explains only what is on the map
+
+**Why this case exists.** All five statuses were always listed. A map of only published documents
+carried four colours that explained nothing, and "Approved" — reached only by a signed accessibility
+conformance report — read as stale. Bugs S.No 353.
+
+**Steps**
+1. Open **Traceability** on a project where every document is published.
+2. Run a phase to its gate (documents waiting for approval) and reload.
+3. Filter by a Phase that has only published documents.
+
+**Expected**
+- Step 1: the legend shows **Published** only.
+- Step 2: **Published** and **Waiting for approval**.
+- Step 3: the legend follows the filter.
+
+**Pass / Fail**
+- **FAIL on a legend colour no box on the map has.**
+
+---
+
+### TC-946 · The third filter says what it highlights
+
+**Why this case exists.** It read "Highlight: none", which looked like "no results" and never said
+what gets highlighted. Bugs S.No 354.
+
+**Steps**
+1. Open the third filter on **Traceability**.
+2. Pick a work item. Then pick **Highlight: All work items**.
+
+**Expected**
+- Closed with nothing picked: **Highlight: All work items**.
+- After picking: **Highlight: WI-1 People Desk - Ideation**; that item's documents stay bright and
+  every other document fades (nothing disappears).
+- Picking **All work items** again brings every box back to full strength.
+
+**Pass / Fail**
+- **FAIL if picking an item hides documents instead of fading them.**

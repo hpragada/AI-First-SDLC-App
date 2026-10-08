@@ -20,16 +20,32 @@ const UNTIED = "untied";
 // This screen kept its own three-way copy that knew only "published" and a status nothing ever
 // set ("pending_gate"), so an approved, a waiting and a superseded document all drew as "Draft" —
 // and the legend promised a colour no node could have.
-const LEGEND = (
-  <span className="graph-legend">
-    {ARTIFACT_STATUSES.map((status) => (
-      <span className="graph-legend__item" key={status}>
-        <span className="graph-legend__dot" style={{ background: artifactStatusColor(status) }} />
-        {artifactStatusLabel(status)}
-      </span>
-    ))}
-  </span>
-);
+//
+// 2026-10-08: the live map's legend explains only the statuses actually ON the map. All five
+// were always listed, so a map of nothing but published documents carried four colours that
+// explained nothing — and "Approved", which only a signed accessibility conformance report ever
+// reaches (a phase approval publishes straight away), read as stale. Same rule as the filters
+// beside it: never offer what matches nothing.
+function Legend({ statuses = ARTIFACT_STATUSES }: { statuses?: readonly string[] }) {
+  const present = new Set(statuses);
+  return (
+    <span className="graph-legend">
+      {ARTIFACT_STATUSES.filter((s) => present.has(s)).map((status) => (
+        <span className="graph-legend__item" key={status}>
+          <span className="graph-legend__dot" style={{ background: artifactStatusColor(status) }} />
+          {artifactStatusLabel(status)}
+        </span>
+      ))}
+      {/* A status this map does not know still gets explained, in its own words. */}
+      {[...present].filter((s) => !(ARTIFACT_STATUSES as readonly string[]).includes(s)).map((s) => (
+        <span className="graph-legend__item" key={s}>
+          <span className="graph-legend__dot" style={{ background: artifactStatusColor(s) }} />
+          {artifactStatusLabel(s)}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export function TraceabilityView({ forceView }: { forceView?: TraceabilityViewState }) {
   if (forceView) return <TraceabilityGallery view={forceView} />;
@@ -144,9 +160,12 @@ function TraceabilityLive() {
           value={highlight}
           onChange={(e) => setHighlight(e.target.value)}
         >
-          <option value="">Highlight: none</option>
+          {/* 2026-10-08: "Highlight: none" read like "no results" and never said WHAT is
+              highlighted. Each choice carries the prefix so the closed box reads
+              "Highlight: WI-1 …" once one is picked. */}
+          <option value="">Highlight: All work items</option>
           {workItemOptions.map((w) => (
-            <option key={w.value} value={w.value}>{w.label}</option>
+            <option key={w.value} value={w.value}>{`Highlight: ${w.label}`}</option>
           ))}
         </select>
         {/* The number is the honest part of a filtered view: a map showing 12 of 340 documents
@@ -157,7 +176,7 @@ function TraceabilityLive() {
           </span>
         )}
         <span className="u-spacer" />
-        {LEGEND}
+        <Legend statuses={[...new Set(filtered.nodes.map((n) => n.status))]} />
       </div>
 
       {graph.isLoading ? (
@@ -200,11 +219,14 @@ function TraceabilityLive() {
 
 function LineageGraph({ graph, dimmed }: { graph: TraceGraph; dimmed?: Set<string> }) {
   const navigate = useNavigate();
-  const cols = 4;
-  const boxW = 150;
-  const boxH = 44;
-  const gapX = 100;
-  const gapY = 90;
+  // 2026-10-08: three per row and wider, with the name wrapping onto a second line (team choice
+  // B). Boxes were 150 wide, four to a row, and the name was cut by COUNTING 22 letters — which at
+  // this font is wider than the box, so the text ran out past the border.
+  const cols = 3;
+  const boxW = 240;
+  const boxH = 62;
+  const gapX = 90;
+  const gapY = 80;
   const marginX = 20;
   const marginY = 40;
 
@@ -264,13 +286,15 @@ function LineageGraph({ graph, dimmed }: { graph: TraceGraph; dimmed?: Set<strin
               >
                 <title>{`${label} — ${detail}`}</title>
                 <rect width={boxW} height={boxH} rx="8" className="gnode" style={{ stroke: color }} />
-                <circle cx="16" cy="22" r="5" style={{ fill: color }} />
-                <text x="30" y="20" style={{ fill: "var(--text-strong)", fontSize: "12px", fontWeight: 600 }}>
-                  {label.length > 22 ? `${label.slice(0, 22)}…` : label}
-                </text>
-                <text x="30" y="35" style={{ fill: "var(--text-muted)", fontSize: "11px" }}>
-                  {detail.length > 22 ? `${detail.slice(0, 22)}…` : detail}
-                </text>
+                <circle cx="16" cy="18" r="5" style={{ fill: color }} />
+                {/* HTML inside the box, so the BROWSER measures the text: up to two lines of name,
+                    then "…", always inside the border. The full name is the node's <title>. */}
+                <foreignObject x="28" y="6" width={boxW - 38} height={boxH - 12}>
+                  <div className="gnode__text">
+                    <span className="gnode__title">{label}</span>
+                    <span className="gnode__detail">{detail}</span>
+                  </div>
+                </foreignObject>
               </g>
             );
           })}
@@ -300,7 +324,7 @@ function TraceabilityGallery({ view }: { view: TraceabilityViewState }) {
           for showing the map's own states, not for pretending controls work. */}
       <div className="u-row u-wrap" style={{ marginBottom: "var(--space-4)" }}>
         <span className="u-spacer" />
-        {LEGEND}
+        <Legend />
       </div>
 
       {view === "empty" ? (

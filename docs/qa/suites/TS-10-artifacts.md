@@ -1288,3 +1288,22 @@ added by the pack audit therefore continue at **TC-241**, which collides with no
   storage path in a client's documentation is the outcome non-negotiable #5 exists to prevent.
 - A wireframe row that **does** carry a document of its own was never affected, which is why this
   went unseen — ask a developer for a states-only row if the project has none.
+
+---
+
+### TC-943 · The Artifacts sub-heading is in plain words
+
+**Why this case exists.** It read "The registry: pointers, versions, and system-of-record links —
+never artifact bodies. Preview opens read-only.", which describes the platform's storage design to a
+client. Bugs S.No 351.
+
+**Steps**
+1. Open **Artifacts & Traceability**.
+
+**Expected**
+- Under **Artifacts**: "Every document your phases have produced: its version, its status and
+  where it's kept. Preview a document to read it without changing it."
+- None of "registry", "pointers", "system-of-record" or "artifact bodies" appears.
+
+**Pass / Fail**
+- **FAIL on any of those words.**

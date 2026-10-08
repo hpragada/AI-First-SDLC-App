@@ -107,9 +107,13 @@ describe("the traceability map", () => {
     renderWithProviders(<TraceabilityView />);
 
     await waitFor(() => expect(document.querySelectorAll("svg g[role=button]").length).toBe(2));
+    // Only the statuses on the map are explained (2026-10-08).
     const legend = document.querySelector(".graph-legend") as HTMLElement;
-    for (const word of ["Published", "Approved", "Waiting for approval", "Draft", "Superseded"]) {
+    for (const word of ["Approved", "Waiting for approval"]) {
       expect(legend.textContent).toContain(word);
+    }
+    for (const word of ["Published", "Draft", "Superseded"]) {
+      expect(legend.textContent).not.toContain(word);
     }
     expect(legend.textContent).not.toContain("Pending gate");
 

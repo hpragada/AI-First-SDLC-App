@@ -86,8 +86,8 @@ export function ArtifactsRegistry({ forceView }: { forceView?: ArtifactsView }) 
         <div className="page-head__titles">
           <h1 className="t-h1">Artifacts</h1>
           <p className="page-head__sub">
-            The registry: pointers, versions, and system-of-record links — never artifact bodies.
-            Preview opens read-only.
+            Every document your phases have produced: its version, its status and where it&apos;s
+            kept. Preview a document to read it without changing it.
           </p>
         </div>
         <Link to="/traceability" className="btn btn--secondary">
