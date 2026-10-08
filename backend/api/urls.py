@@ -27,6 +27,7 @@ from .runner_views import (
     RunnerPhaseFetchView,
     RunnerPhaseReportView,
     RunnerReviewReportView,
+    RunnerLastDisconnectView,
     RunnerRevokeView,
     RunnerStateView,
     RunnerWorkClaimView,
@@ -93,6 +94,7 @@ urlpatterns = [
     # Local-companion runner (Phase 2): enrollment (tenant-scoped) + remote Platform-State.
     path("runners/", RunnerEnrollmentView.as_view(), name="runner-enroll"),
     path("runners/<uuid:pk>/revoke/", RunnerRevokeView.as_view(), name="runner-revoke"),
+    path("runners/last-disconnect/", RunnerLastDisconnectView.as_view(), name="runner-last-disconnect"),
     path("runner/state/<str:tool>/", RunnerStateView.as_view(), name="runner-state"),
     path("runner/builds/<uuid:run_id>/", RunnerBuildFetchView.as_view(), name="runner-build-fetch"),
     path("runner/builds/<uuid:run_id>/report/", RunnerBuildReportView.as_view(),

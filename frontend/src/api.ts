@@ -438,6 +438,11 @@ export const api = {
   // Phase 4.8 T2 — companion enrollments (4.7 T11). POST issues a one-time token.
   // Backend groups enrollments by machine label on GET; POST binds developer_id from session.
   listRunners: () => req<Runner[]>("GET", "/runners/"),
+  // When my machine was last disconnected from this project (2026-10-08), so Connect Machine can
+  // say so on any later visit. Null when there is no recorded disconnect.
+  lastDisconnect: (projectId: string) =>
+    req<{ disconnected_at: string | null }>(
+      "GET", `/runners/last-disconnect/?project_id=${encodeURIComponent(projectId)}`),
   createRunner: (body: { project_id: string; label?: string }) =>
     req<RunnerToken>("POST", "/runners/", { body }),
   revokeRunner: (id: string) =>

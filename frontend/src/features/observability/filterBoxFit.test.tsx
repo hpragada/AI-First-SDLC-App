@@ -84,8 +84,8 @@ describe("the Work Items filters", () => {
 
     await waitFor(() => expect(screen.getByText("Basket totals")).toBeDefined());
     for (const label of ["Filter by phase", "Filter by role", "Filter by status"]) {
-      expectFits(screen.getByLabelText(label));
+      // The app's own dropdown since 2026-10-08, so the box is a button — still sized to fit.
+      expectFits(screen.getByRole("button", { name: label }));
     }
-    expect(screen.getByRole("option", { name: "Context Extraction" })).toBeDefined();
   });
 });

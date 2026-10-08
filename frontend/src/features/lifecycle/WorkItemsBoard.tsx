@@ -8,6 +8,7 @@ import {
   Button,
   Chip,
   Drawer,
+  FilterSelect,
   EmptyState,
   Field,
   Input,
@@ -28,7 +29,7 @@ import { ReopenWorkItem } from "./ReopenWorkItem";
 import { roleLabel } from "../identity/roles";
 import { useCreateWorkItem, usePhaseCatalog, useWorkItems } from "./hooks";
 import { workItemLink } from "../../links";
-import { humanizeLabel, lifecyclePhaseColumns, phaseLabel, statusLabel } from "./phases";
+import { humanizeLabel, lifecyclePhaseColumns, phaseLabel } from "./phases";
 
 // S-14 view states: board (default) · list · filtered (tasks only) · empty.
 export type BoardView = "board" | "list" | "filtered" | "empty";
@@ -39,6 +40,8 @@ export type BoardView = "board" | "list" | "filtered" | "empty";
 // changed column when the filter changed. It has a column of its own now.
 const BACKLOG_KEY = "backlog";
 const BACKLOG = { key: BACKLOG_KEY, label: "Backlog" };
+// The Phase filter's value for those items (the choice is labelled "Backlog", like the column).
+const NOT_STARTED = "not_started";
 
 // Bugs.xlsx row 27.1: columns are the full lifecycle in SDLC order (from the catalog), not a
 // hardcoded four. The board scrolls horizontally, so the extra columns need no layout change.
@@ -71,7 +74,7 @@ const STATE_BADGE = {
   in_progress: { variant: "running", label: "In progress" },
   in_review: { variant: "waiting", label: "In review" },
   blocked: { variant: "failed", label: "Blocked" },
-  done: { variant: "done", label: "Phase complete" },
+  done: { variant: "done", label: "Done" },
   cancelled: { variant: "cancelled", label: "Cancelled" },
 } satisfies Record<WorkItemState, { variant: BadgeVariant; label: string }>;
 
@@ -91,47 +94,115 @@ function statusBadge(card: WorkItemCard) {
 // option B, a status pill (the badge the rest of the app already uses). Read off the same run the
 // card's column comes from, so the column and the pill can never describe different runs.
 //
-// Four markers, not three: a phase can FINISH and still be waiting for a person to approve it, and
-// calling that "Done" is the same kind of untruth as the bug being fixed.
-function phasePill(card: WorkItemCard) {
+// 2026-10-08: the pill and the Status filter are now ONE vocabulary. The filter used to list the
+// item's stored state ("Proposed", "Done") while the card said something else ("Not started",
+// "Done" about the PHASE), so the two could not be matched. Every situation now has one word,
+// the same for every reader, and the filter offers exactly those words.
+//
+// "Yours" is no longer said in words ("Waiting for you" hid WHAT was being waited for, and meant
+// something different to each reader). It is the pill's colour plus a small person marker —
+// never colour alone, which a colour-blind reader or a screen reader cannot see (WCAG 1.4.1).
+export type BoardStatusKey =
+  | "not_started"
+  | "running"
+  | "paused"
+  | "stalled"
+  | "waiting_answer"
+  | "waiting_review"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+/** Filter order and wording. The card pill uses the same labels. */
+export const BOARD_STATUSES: { key: BoardStatusKey; label: string }[] = [
+  { key: "not_started", label: "Not started" },
+  { key: "running", label: "Running" },
+  { key: "paused", label: "Paused" },
+  { key: "stalled", label: "Stopped responding" },
+  { key: "waiting_answer", label: "Waiting for answer" },
+  { key: "waiting_review", label: "Waiting for review" },
+  { key: "done", label: "Done" },
+  { key: "failed", label: "Failed" },
+  { key: "cancelled", label: "Cancelled" },
+];
+const BOARD_STATUS_LABEL = new Map(BOARD_STATUSES.map((s) => [s.key, s.label]));
+
+const BOARD_STATUS_VARIANT = {
+  not_started: "queued",
+  running: "running",
+  // Outline, not a colour: a person stopped it on purpose, which is neither progress nor trouble.
+  paused: "outline",
+  // The same striped badge the run console uses for a run parked for takeover.
+  stalled: "parked",
+  waiting_answer: "neutral",
+  waiting_review: "neutral",
+  done: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+} satisfies Record<BoardStatusKey, BadgeVariant>;
+
+// When it is the reader's to act on, the waiting pills keep the colours they had.
+const YOURS_VARIANT: Partial<Record<BoardStatusKey, BadgeVariant>> = {
+  waiting_answer: "needs-answer",
+  waiting_review: "gate",
+};
+
+/** The one situation a card is in, and whether the reader can act on it. `key` is null only
+ *  for a run status with no word of its own (an API older than this screen); the pill then
+ *  falls back to the item's own badge and the card appears under "Status: All" only. */
+export function boardStatus(card: WorkItemCard): { key: BoardStatusKey | null; yours: boolean } {
   // Cancelled outranks everything, for the reason `statusBadge` gives.
-  if (card.state === "cancelled") return <Badge variant="cancelled">Cancelled</Badge>;
-  if (!card.current_phase) return <Badge variant="queued">Not started</Badge>;
-  // "Waiting for you" only when it really is yours (`needs.yours`, decided by the same rule as
-  // the Approve and Answer buttons). It used to say that to everyone, so a Designer read it on a
-  // build gate only a Tech Lead can decide — while their dashboard, which does ask, said nothing
-  // was waiting. Work that is someone else's still shows as waiting, in the quiet grey: the fact
-  // is true, the claim about WHO was not.
-  if (card.needs?.clarification) {
-    return card.needs.yours
-      ? <Badge variant="needs-answer">Waiting for you</Badge>
-      : <Badge variant="neutral">Waiting for an answer</Badge>;
-  }
-  if (card.needs?.gate) {
-    return card.needs.yours
-      ? <Badge variant="gate">Waiting for you</Badge>
-      : <Badge variant="neutral">Waiting for review</Badge>;
-  }
+  if (card.state === "cancelled") return { key: "cancelled", yours: false };
+  if (!card.current_phase) return { key: "not_started", yours: false };
+  // `needs.yours` is decided by the same rule as the Approve and Answer buttons.
+  if (card.needs?.clarification) return { key: "waiting_answer", yours: Boolean(card.needs.yours) };
+  if (card.needs?.gate) return { key: "waiting_review", yours: Boolean(card.needs.yours) };
   switch (card.run_status) {
     case "pending":
     case "running":
-      return <Badge variant="running">Running</Badge>;
+      return { key: "running", yours: false };
+    case "paused":
+      return { key: "paused", yours: false };
+    case "stalled":
+      return { key: "stalled", yours: false };
+    // At its gate, but no pending approval reached this card — nobody to name, so not "yours".
     case "awaiting_gate":
-      // The run says it is at a gate but no pending approval reached this card, so there is
-      // nobody to name: state the fact and claim nothing about whose it is.
-      return <Badge variant="neutral">Waiting for approval</Badge>;
+      return { key: "waiting_review", yours: false };
     case "approved":
     case "completed":
-      return <Badge variant="done">Done</Badge>;
+      return { key: "done", yours: false };
     // The same reading Phases & Runs gives a rejected run.
     case "failed":
     case "rejected":
-      return <Badge variant="failed">Failed</Badge>;
+      return { key: "failed", yours: false };
     default:
-      // An API too old to send the run's status, or a status with no marker of its own (a run
-      // parked waiting for its machine): the work item's own badge, rather than a guess.
-      return statusBadge(card);
+      return { key: null, yours: false };
   }
+}
+
+function PersonMark() {
+  return (
+    <span className="badge__mine" title="You can act on this">
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor"
+        strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="8" r="4" />
+        <path d="M5 21v-1a7 7 0 0 1 14 0v1" />
+      </svg>
+      <span className="u-visually-hidden">You can act on this: </span>
+    </span>
+  );
+}
+
+function phasePill(card: WorkItemCard) {
+  const { key, yours } = boardStatus(card);
+  if (!key) return statusBadge(card);
+  const variant = (yours && YOURS_VARIANT[key]) || BOARD_STATUS_VARIANT[key];
+  return (
+    <Badge variant={variant}>
+      {yours && <PersonMark />}
+      {BOARD_STATUS_LABEL.get(key)}
+    </Badge>
+  );
 }
 
 // Human-readable work-item type ("story" → "Story"). One place so the board card and list agree.
@@ -339,43 +410,84 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
   }, [catalog.data]);
 
   const allItems = items.data ?? [];
-  const list = useMemo(
-    () =>
-      allItems.filter((item) => {
-        const phase = barePhase(item.current_phase);
-        if (phaseFilter && phase !== phaseFilter) return false;
-        if (roleFilter && (roleByPhase.get(phase) ?? "") !== roleFilter) return false;
-        if (statusFilter && item.state !== statusFilter) return false;
+
+  // 2026-10-08: every filter lists its WHOLE vocabulary, in lifecycle order, with how many items
+  // each choice would show. They used to list only what the loaded items happened to contain, so
+  // a project with one run offered one phase, one role and two statuses, and read as broken.
+  // Onboarding phases are left out for every project: they run on the project, never on a work
+  // item, so no card can ever be in one (the same reason the board has no column for them).
+  const phaseChoices = useMemo(
+    () => [
+      { key: NOT_STARTED, label: "Backlog" },
+      ...lifecyclePhaseColumns().map((c) => ({ key: barePhase(c.key), label: phaseLabel(c.key) })),
+    ],
+    [],
+  );
+  // The roles that sign off a work item's phases, in the order their phases come. Engineer and
+  // Admin approve no phase, so choosing them could only ever show an empty board.
+  const roleChoices = useMemo(() => {
+    const seen: string[] = [];
+    for (const c of lifecyclePhaseColumns()) {
+      const role = roleByPhase.get(barePhase(c.key));
+      if (role && !seen.includes(role)) seen.push(role);
+    }
+    return seen.map((r) => ({ key: r, label: roleLabel(r) }));
+  }, [roleByPhase]);
+
+  // One test per filter, so a count can apply every filter EXCEPT its own.
+  const matches = useMemo(() => {
+    const phaseOf = (item: WorkItemCard) => barePhase(item.current_phase) || NOT_STARTED;
+    return {
+      phase: (item: WorkItemCard) => !phaseFilter || phaseOf(item) === phaseFilter,
+      role: (item: WorkItemCard) =>
+        !roleFilter || (roleByPhase.get(barePhase(item.current_phase)) ?? "") === roleFilter,
+      status: (item: WorkItemCard) => {
+        if (statusFilter) return boardStatus(item).key === statusFilter;
         // Bugs S.No 140: cancelled work is hidden by default. Cancelling exists to get things
         // OFF the board — leaving them on it would make cancelling pointless. Never hidden
         // outright, though: choosing "Cancelled" in the status filter shows exactly those, so
         // the record stays reachable and a cancellation can be found and questioned.
-        if (!statusFilter && item.state === "cancelled") return false;
-        if (search) {
-          const hay = `${item.key ?? ""} ${item.title ?? ""} ${item.type ?? ""} ${item.feature_stream ?? ""}`.toLowerCase();
-          if (!hay.includes(search.toLowerCase())) return false;
-        }
-        return true;
-      }),
-    [allItems, phaseFilter, roleFilter, statusFilter, search, roleByPhase],
+        return item.state !== "cancelled";
+      },
+      search: (item: WorkItemCard) => {
+        if (!search) return true;
+        const hay = `${item.key ?? ""} ${item.title ?? ""} ${item.type ?? ""} ${item.feature_stream ?? ""}`.toLowerCase();
+        return hay.includes(search.toLowerCase());
+      },
+      phaseOf,
+    };
+  }, [phaseFilter, roleFilter, statusFilter, search, roleByPhase]);
+
+  const list = useMemo(
+    () => allItems.filter((i) => matches.phase(i) && matches.role(i) && matches.status(i) && matches.search(i)),
+    [allItems, matches],
   );
 
-  // Filter options reflect what's actually on the board.
-  const phaseOptions = useMemo(
-    () => [...new Set(allItems.map((i) => barePhase(i.current_phase)).filter(Boolean))].sort(),
-    [allItems],
-  );
-  const roleOptions = useMemo(
-    () =>
-      [...new Set(
-        allItems.map((i) => roleByPhase.get(barePhase(i.current_phase)) ?? "").filter(Boolean),
-      )].sort(),
-    [allItems, roleByPhase],
-  );
-  const statusOptions = useMemo(
-    () => [...new Set(allItems.map((i) => i.state).filter(Boolean))].sort(),
-    [allItems],
-  );
+  const phaseCounts = useMemo(() => {
+    const pool = allItems.filter((i) => matches.role(i) && matches.status(i) && matches.search(i));
+    const counts = new Map<string, number>();
+    for (const i of pool) counts.set(matches.phaseOf(i), (counts.get(matches.phaseOf(i)) ?? 0) + 1);
+    return { all: pool.length, counts };
+  }, [allItems, matches]);
+  const roleCounts = useMemo(() => {
+    const pool = allItems.filter((i) => matches.phase(i) && matches.status(i) && matches.search(i));
+    const counts = new Map<string, number>();
+    for (const i of pool) {
+      const role = roleByPhase.get(barePhase(i.current_phase));
+      if (role) counts.set(role, (counts.get(role) ?? 0) + 1);
+    }
+    return { all: pool.length, counts };
+  }, [allItems, matches, roleByPhase]);
+  const statusCounts = useMemo(() => {
+    const pool = allItems.filter((i) => matches.phase(i) && matches.role(i) && matches.search(i));
+    const counts = new Map<string, number>();
+    for (const i of pool) {
+      const key = boardStatus(i).key;
+      if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    // "All" never includes cancelled work (it is hidden until asked for), so neither does its count.
+    return { all: pool.filter((i) => i.state !== "cancelled").length, counts };
+  }, [allItems, matches]);
   // How many are being hidden right now — said out loud beside the filter. A board that
   // quietly drops rows is a board whose counts nobody can reconcile; "3 cancelled hidden" is
   // the difference between a filter and a disappearance.
@@ -459,19 +571,17 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
           />
           {/* Sized to the longest phase name rather than capped by eye: "Intelligent Context
               Extraction" used to be cut in the closed box with no way to read it. */}
-          <select
-            className="select select--fit"
-            aria-label="Filter by phase"
+          <FilterSelect
+            label="Filter by phase"
+            prefix="Phase"
+            allLabel="All phases"
+            allCount={phaseCounts.all}
+            options={phaseChoices.map((p) => ({
+              value: p.key, label: p.label, count: phaseCounts.counts.get(p.key) ?? 0,
+            }))}
             value={phaseFilter}
-            onChange={(e) => setPhaseFilter(e.target.value)}
-          >
-            <option value="">Phase: All</option>
-            {phaseOptions.map((p) => (
-              <option key={p} value={p}>
-                {phaseLabel(p)}
-              </option>
-            ))}
-          </select>
+            onChange={setPhaseFilter}
+          />
           <span className="u-row-tight">
             {(["all", "epic", "task", "defect"] as const).map((l) => (
               <button
@@ -484,32 +594,28 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
               </button>
             ))}
           </span>
-          <select
-            className="select select--fit"
-            aria-label="Filter by role"
+          <FilterSelect
+            label="Filter by role"
+            prefix="Role"
+            allLabel="All roles"
+            allCount={roleCounts.all}
+            options={roleChoices.map((r) => ({
+              value: r.key, label: r.label, count: roleCounts.counts.get(r.key) ?? 0,
+            }))}
             value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-          >
-            <option value="">Role: All</option>
-            {roleOptions.map((r) => (
-              <option key={r} value={r}>
-                {roleLabel(r)}
-              </option>
-            ))}
-          </select>
-          <select
-            className="select select--fit"
-            aria-label="Filter by status"
+            onChange={setRoleFilter}
+          />
+          <FilterSelect
+            label="Filter by status"
+            prefix="Status"
+            allLabel="All statuses"
+            allCount={statusCounts.all}
+            options={BOARD_STATUSES.map((st) => ({
+              value: st.key, label: st.label, count: statusCounts.counts.get(st.key) ?? 0,
+            }))}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="">Status: All</option>
-            {statusOptions.map((s) => (
-              <option key={s} value={s}>
-                {statusLabel(s)}
-              </option>
-            ))}
-          </select>
+            onChange={setStatusFilter}
+          />
           {hiddenCancelled > 0 && (
             <button
               type="button"

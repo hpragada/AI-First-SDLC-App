@@ -131,7 +131,18 @@ export function useRevokeRunner() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.revokeRunner(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["runners"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["runners"] });
+      qc.invalidateQueries({ queryKey: ["last-disconnect"] });
+    },
+  });
+}
+
+export function useLastDisconnect(projectId: string | undefined) {
+  return useQuery({
+    queryKey: ["last-disconnect", projectId],
+    queryFn: () => api.lastDisconnect(projectId as string),
+    enabled: Boolean(projectId),
   });
 }
 

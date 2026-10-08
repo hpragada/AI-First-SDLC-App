@@ -65,17 +65,63 @@ def authenticate_runner(*, tenant_id, token):
 
 
 def revoke_runner(*, tenant_id, enrollment_id) -> bool:
-    """Revoke an enrollment (its token stops authenticating). Returns True if one changed."""
+    """Disconnect the machine this enrollment belongs to. Returns True if anything changed.
+
+    2026-10-08: this used to revoke the ONE row it was given. A machine is every active
+    enrollment the Connect Machine card groups together (same developer, same label — or, for
+    the label-less tokens the web app generates, same project; see `list_developer_enrollments`),
+    and each "Generate token" adds another. So Disconnect cancelled the newest key and left the
+    older ones working: the page then showed an older key's last heartbeat as "last seen", and a
+    companion started with any of those keys could still pick up phases. It now revokes the
+    whole group, which is what the person clicking Disconnect meant.
+
+    The moment is recorded as a ledger event, which `last_disconnect` reads back so the page can
+    say when it happened on any later visit. An event rather than the row's `updated_at`: revokes
+    before this change left no trace of their time, and an event either exists or does not — there
+    is no old row whose timestamp could be mistaken for a disconnect."""
+    from mcp_platform_state.tools import log_event
+
     from apps.runs.models import RunnerEnrollment
     from apps.tenancy.context import tenant_context
 
     with tenant_context(tenant_id):
-        changed = (
-            RunnerEnrollment.objects
-            .filter(id=enrollment_id, tenant_id=tenant_id)
-            .update(status=RunnerEnrollment.Status.REVOKED)
+        row = RunnerEnrollment.objects.filter(id=enrollment_id, tenant_id=tenant_id).first()
+        if row is None:
+            return False
+        group = RunnerEnrollment.objects.filter(
+            tenant_id=tenant_id, developer_id=row.developer_id, label=row.label,
+            status=RunnerEnrollment.Status.ACTIVE,
         )
+        if not row.label:
+            group = group.filter(project_id=row.project_id)
+        project_ids = sorted({str(p) for p in group.values_list("project_id", flat=True)})
+        changed = group.update(status=RunnerEnrollment.Status.REVOKED)
+    if changed:
+        payload = {"developer_id": str(row.developer_id) if row.developer_id else None,
+                   "machine": row.label, "keys_revoked": changed}
+        for project_id in project_ids:
+            log_event(str(tenant_id), "user", "runner.disconnected", "runner_enrollment",
+                      str(row.id), {**payload, "project_id": project_id})
     return bool(changed)
+
+
+def last_disconnect(*, tenant_id, developer_id, project_id) -> str | None:
+    """When this developer's machine was last disconnected from this project (ISO, UTC), or None
+    when there is no recorded disconnect (including every one from before 2026-10-08)."""
+    from apps.ledger.models import Event
+    from apps.tenancy.context import tenant_context
+
+    with tenant_context(tenant_id):
+        event = (
+            Event.objects.filter(
+                tenant_id=tenant_id, action="runner.disconnected",
+                payload__project_id=str(project_id),
+                payload__developer_id=str(developer_id) if developer_id else None,
+            )
+            .order_by("-ts")
+            .first()
+        )
+    return event.ts.isoformat() if event else None
 
 
 def list_developer_enrollments(*, tenant_id, developer_id) -> list[dict]:

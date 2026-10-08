@@ -1644,3 +1644,90 @@ Found in recon, not reported. Bugs S.No 336.
 - **FAIL on any eight-character code.**
 - **FAIL if a carrier work item's question disappears or shows a blank label** — those are the
   questions nobody else can answer.
+
+---
+
+### TC-937 · The Phase and Role filters list everything, with counts
+
+**Why this case exists.** The filters on Work Items listed only what the loaded items happened to
+contain, so a project with one run offered one phase, one role and two statuses and read as broken
+(2026-10-08). Bugs S.No 346.
+
+**Steps**
+1. Open **Work Items** on a project with a few items, some never run.
+2. Open the **Phase** filter. Then the **Role** filter.
+3. Choose **Backlog** in Phase. Then choose **Requirements**.
+
+**Expected**
+- Phase lists **All phases**, **Backlog**, then all 13 phases in lifecycle order (Ideation …
+  Deployment). No Onboarding, Context Bridge, Context Extraction or Document Vision, on any project.
+- Role lists Product Owner, Architect, Designer, Tech Lead, Reviewer, QA Lead, Security Engineer,
+  DevOps, in that order. No Engineer, no Admin.
+- Every row has its count in a right-aligned column; rows with 0 are greyed and still selectable.
+- The closed box reads e.g. `Phase: Backlog` with the count on the right — no brackets.
+- Choosing Backlog shows exactly the Backlog column's items.
+
+**Pass / Fail**
+- PASS when every phase and role is offered with a correct count.
+- **FAIL on any "(0)" in brackets, or a missing phase or role.**
+
+---
+
+### TC-938 · Each card's status word is a Status filter choice
+
+**Why this case exists.** The Status filter listed the item's stored state ("Proposed", "Done")
+while the card said something else, so nobody could match the two. Bugs S.No 347.
+
+**Steps**
+1. Open the **Status** filter on Work Items.
+2. Choose each status that has a count above 0.
+
+**Expected**
+- The list reads: Not started, Running, Paused, Stopped responding, Waiting for answer, Waiting for
+  review, Done, Failed, Cancelled. No Proposed, Accepted, In review or Blocked.
+- Every card left on the board carries exactly the word you chose.
+- The counts under Status change when a Phase or Role is chosen (they respect the other filters).
+- In **List** view, a finished phase's badge reads **Done** (not "Phase complete").
+
+**Pass / Fail**
+- PASS when the word on every shown card equals the chosen filter.
+- **FAIL on any card whose word is not in the Status list.**
+
+---
+
+### TC-939 · "Waiting" pills use the same words for everyone, and mark what is yours
+
+**Why this case exists.** Cards said "Waiting for you", which hid WHAT was waited for and meant
+something different to each reader. Bugs S.No 347.
+
+**Setup.** Two users on one project in different roles; one item at a review gate.
+
+**Steps**
+1. As the role that approves that phase, look at the card. Hover the small person marker.
+2. As the other user, look at the same card.
+
+**Expected**
+- Both read **Waiting for review** (or **Waiting for answer** for a question). "Waiting for you"
+  appears nowhere.
+- Only the approver sees the person marker and the coloured pill; hovering says
+  **You can act on this**. The other user sees a grey pill with no marker.
+
+**Pass / Fail**
+- **FAIL if the marker shows for someone who cannot act on the item.**
+
+---
+
+### TC-940 · The filter dropdown works from the keyboard
+
+**Steps**
+1. Tab to the Phase filter. Press **Enter**.
+2. Press **↓** twice, then **Enter**.
+3. Open it again and press **Esc**.
+
+**Expected**
+- Enter opens the list; the arrows move the highlight; Enter picks and closes it; the board filters.
+- Focus returns to the filter box after picking and after Esc.
+- Esc closes only the dropdown — nothing else on the page.
+
+**Pass / Fail**
+- **FAIL if focus is lost or Esc closes anything besides the list.**

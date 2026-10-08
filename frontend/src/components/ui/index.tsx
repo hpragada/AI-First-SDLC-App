@@ -359,6 +359,134 @@ export function RowMenu({ label, items }: { label: string; items: RowMenuItem[] 
   );
 }
 
+export type FilterChoice = { value: string; label: string; count: number };
+
+/**
+ * A filter dropdown that shows how many items each choice would return, right-aligned
+ * (Work Items, 2026-10-08). The browser's own <select> can only draw one line of plain text per
+ * option, so the counts came out as "Architecture (0)" — the team's approved mockup has them in a
+ * column of their own, and this is what draws that.
+ *
+ * A choice with nothing behind it is greyed but still selectable: picking it shows an honest
+ * empty board. Keyboard: Enter / Space / ↓ open; ↑ ↓ Home End move; Enter or Space picks; Esc
+ * and Tab close, focus returning to the box. Listbox ARIA, so a screen reader announces each
+ * choice with its count and which one is selected.
+ */
+export function FilterSelect({
+  label, prefix, allLabel, allCount, options, value, onChange,
+}: {
+  /** Accessible name, e.g. "Filter by phase". */
+  label: string;
+  /** Shown in the closed box before the choice: "Phase" → "Phase: Ideation". */
+  prefix: string;
+  /** The first row of the list, e.g. "All phases". */
+  allLabel: string;
+  allCount: number;
+  options: FilterChoice[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rows: FilterChoice[] = [{ value: "", label: allLabel, count: allCount }, ...options];
+  const selectedIndex = Math.max(0, rows.findIndex((r) => r.value === value));
+  const [active, setActive] = useState(selectedIndex);
+  const id = useId();
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLUListElement>(null);
+  const close = useCallback(() => {
+    setOpen(false);
+    trigger.current?.focus();
+  }, []);
+  useDismissable(open, close, root, list, list);
+  useFloatingPosition(open, trigger, list, { align: "start" });
+
+  const show = () => {
+    setActive(selectedIndex);
+    setOpen(true);
+  };
+  const pick = (index: number) => {
+    onChange(rows[index].value);
+    close();
+  };
+  const selected = rows[selectedIndex];
+
+  const onTriggerKey = (event: React.KeyboardEvent) => {
+    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      show();
+    }
+  };
+  const onListKey = (event: React.KeyboardEvent) => {
+    const last = rows.length - 1;
+    const move: Record<string, number> = {
+      ArrowDown: Math.min(last, active + 1), ArrowUp: Math.max(0, active - 1), Home: 0, End: last,
+    };
+    if (event.key in move) {
+      event.preventDefault();
+      setActive(move[event.key]);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      pick(active);
+    } else if (event.key === "Tab") {
+      close();
+    }
+  };
+
+  return (
+    <div className="filter-select" ref={root}>
+      <button
+        ref={trigger}
+        type="button"
+        className="select select--fit filter-select__box"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? `${id}-list` : undefined}
+        onClick={() => (open ? close() : show())}
+        onKeyDown={onTriggerKey}
+      >
+        <span>{prefix}: {selected.value === "" ? "All" : selected.label}</span>
+        <span className="filter-select__count">{selected.count}</span>
+      </button>
+      {open && (
+        <FloatingLayer>
+          <ul
+            ref={list}
+            id={`${id}-list`}
+            className="popover-layer filter-select__list"
+            role="listbox"
+            aria-label={label}
+            tabIndex={-1}
+            aria-activedescendant={`${id}-${active}`}
+            onKeyDown={onListKey}
+          >
+            {rows.map((row, index) => (
+              <li
+                key={row.value || "all"}
+                id={`${id}-${index}`}
+                role="option"
+                aria-selected={index === selectedIndex}
+                className={cx(
+                  "filter-select__option",
+                  index === active && "is-active",
+                  index === selectedIndex && "is-selected",
+                  row.count === 0 && "is-empty",
+                )}
+                onMouseEnter={() => setActive(index)}
+                onClick={() => pick(index)}
+              >
+                <span>{row.label}</span>
+                <span className="filter-select__count">{row.count}</span>
+              </li>
+            ))}
+          </ul>
+        </FloatingLayer>
+      )}
+    </div>
+  );
+}
+
 type Variant =
   | "primary"
   | "secondary"

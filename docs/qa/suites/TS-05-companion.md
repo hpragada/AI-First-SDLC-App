@@ -700,3 +700,49 @@ You will need a terminal with Python 3.12, `git` on PATH, and Claude Code alread
 - This is the first state in the suite's state machine (no-project → not-started → token-generated →
   connected → offline), but it needs its own empty workspace, so it is placed last to avoid
   disturbing the ordered run above.
+
+---
+
+### TC-941 · Disconnect really disconnects, and the page says when
+
+**Why this case exists.** Disconnect cancelled only the newest of the machine's keys. Older keys
+kept working, and the page fell back to one of them: "Offline · last seen 16m ago" was an old key's
+heartbeat, not the disconnect (2026-10-08). Bugs S.No 348.
+
+**Setup.** On one project, click **Generate token** at least twice (two keys), and run the companion
+with the newest.
+
+**Steps**
+1. On **Connect Machine**, click **Disconnect machine**.
+2. Try starting the companion with the OLDER token.
+3. Reload the page. Come back the next day.
+
+**Expected**
+- Straight after the click: a green line **Your machine was disconnected just now. It can't run
+  phases until you connect it again.**, and the setup steps below it. No "Offline", no "last seen".
+- The older token is refused too.
+- On reload and later visits: a grey note, e.g. **Your machine was disconnected today at 2:46 PM**,
+  later **yesterday at …**, **on Monday at …**, **on 8 Sep**, **on 8 Jul 2025**.
+- Hovering the time shows the full date, time and your zone, e.g. `8 Oct 2026, 2:46 PM IST`.
+- After connecting again, the note is gone.
+
+**Pass / Fail**
+- **FAIL if any older token still works, or the time shown is not the moment you clicked.**
+
+---
+
+### TC-942 · Times on Connect Machine are in your own time zone
+
+**Steps**
+1. With the companion connected, read the **last seen** line. Hover it.
+2. Change the computer's time zone and reload.
+3. Read the sub-heading under **Connect your machine**.
+
+**Expected**
+- Last seen reads **just now** while it is live, then **today at …** (never "16m ago").
+- The hover names the zone, and it changes with the computer's time zone.
+- The sub-heading reads: "Phases run on your computer using your Claude Code subscription. Two
+  one-time steps, like pairing a device." — no mention of API keys or billing.
+
+**Pass / Fail**
+- **FAIL if any time on the page is in UTC rather than the viewer's zone.**

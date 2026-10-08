@@ -155,7 +155,7 @@ describe("what each card says (option B, a status pill)", () => {
     await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
     expect(pillOn("Saved payment methods")).toBe("Not started");
     expect(pillOn("Discount codes")).toBe("Running");
-    expect(pillOn("Basket totals")).toBe("Waiting for you");
+    expect(pillOn("Basket totals")).toBe("You can act on this: Waiting for review");
     expect(pillOn("Gift vouchers")).toBe("Failed");
     expect(pillOn("Address book")).toBe("Done");
   });
@@ -168,10 +168,10 @@ describe("what each card says (option B, a status pill)", () => {
     await waitFor(() => expect(screen.getByText("Awaiting sign-off")).toBeDefined());
     // The run is at a gate, but no pending approval reached this card, so there is nobody to
     // name: it states the fact and claims nothing about whose it is.
-    expect(pillOn("Awaiting sign-off")).toBe("Waiting for approval");
+    expect(pillOn("Awaiting sign-off")).toBe("Waiting for review");
   });
 
-  it("says 'Waiting for you' only on a gate this person may actually decide", async () => {
+  it("marks a gate as yours only when this person may actually decide it", async () => {
     stub([
       card({ id: "m1", title: "Mine to approve", current_phase: "02_requirements",
              run_status: "awaiting_gate",
@@ -183,12 +183,12 @@ describe("what each card says (option B, a status pill)", () => {
     renderWithProviders(<WorkItemsBoard />);
 
     await waitFor(() => expect(screen.getByText("Mine to approve")).toBeDefined());
-    expect(pillOn("Mine to approve")).toBe("Waiting for you");
+    expect(pillOn("Mine to approve")).toBe("You can act on this: Waiting for review");
     // Still honestly waiting — just not on this person.
     expect(pillOn("Someone else's gate")).toBe("Waiting for review");
   });
 
-  it("does the same for a question: mine, or waiting for an answer", async () => {
+  it("does the same for a question: the same words, marked when it is mine", async () => {
     stub([
       card({ id: "q1", title: "Mine to answer", current_phase: "02_requirements",
              run_status: "running",
@@ -200,8 +200,8 @@ describe("what each card says (option B, a status pill)", () => {
     renderWithProviders(<WorkItemsBoard />);
 
     await waitFor(() => expect(screen.getByText("Mine to answer")).toBeDefined());
-    expect(pillOn("Mine to answer")).toBe("Waiting for you");
-    expect(pillOn("Not my project's question")).toBe("Waiting for an answer");
+    expect(pillOn("Mine to answer")).toBe("You can act on this: Waiting for answer");
+    expect(pillOn("Not my project's question")).toBe("Waiting for answer");
   });
 
   it("keeps the neutral wording when an older API sends no 'yours' at all", async () => {
@@ -223,6 +223,167 @@ describe("what each card says (option B, a status pill)", () => {
 
     await waitFor(() => expect(screen.getByText("Older API")).toBeDefined());
     expect(pillOn("Older API")).toBe("In progress");
+  });
+});
+
+describe("the person marker and the new pills (2026-10-08)", () => {
+  it("draws the marker only on work that is yours, with a hover title", async () => {
+    stub([
+      card({ id: "y1", title: "Mine", current_phase: "02_requirements", run_status: "awaiting_gate",
+             needs: { gate: true, label: "Requirements gate", yours: true } }),
+      card({ id: "y2", title: "Theirs", current_phase: "02_requirements", run_status: "awaiting_gate",
+             needs: { gate: true, label: "Requirements gate", yours: false } }),
+    ]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Mine")).toBeDefined());
+    const mine = screen.getByText("Mine").closest(".wi-card") as HTMLElement;
+    const theirs = screen.getByText("Theirs").closest(".wi-card") as HTMLElement;
+    expect(mine.querySelector(".badge__mine")?.getAttribute("title")).toBe("You can act on this");
+    expect(theirs.querySelector(".badge__mine")).toBeNull();
+  });
+
+  it("names a paused run and a run that stopped responding", async () => {
+    stub([
+      card({ id: "p1", title: "Held", current_phase: "04_architecture", run_status: "paused" }),
+      card({ id: "p2", title: "Gone quiet", current_phase: "03_prd", run_status: "stalled" }),
+    ]);
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Held")).toBeDefined());
+    expect(pillOn("Held")).toBe("Paused");
+    expect(pillOn("Gone quiet")).toBe("Stopped responding");
+  });
+});
+
+describe("the Phase, Role and Status filters (2026-10-08)", () => {
+  // The filters are the app's own dropdown (FilterSelect), so each row is read as "label count".
+  type User = ReturnType<typeof userEvent.setup>;
+  const rowsOf = async (user: User, label: string) => {
+    await user.click(screen.getByRole("button", { name: label }));
+    const list = await screen.findByRole("listbox", { name: label });
+    const rows = within(list).getAllByRole("option").map((o) =>
+      Array.from(o.querySelectorAll("span")).map((sp) => sp.textContent).join(" "));
+    await user.keyboard("{Escape}");
+    return rows;
+  };
+  const choose = async (user: User, label: string, choice: string) => {
+    await user.click(screen.getByRole("button", { name: label }));
+    const list = await screen.findByRole("listbox", { name: label });
+    const row = within(list).getAllByRole("option")
+      .find((o) => o.querySelector("span")?.textContent === choice);
+    if (!row) throw new Error(`no choice ${choice} in ${label}`);
+    await user.click(row);
+  };
+
+  it("list every phase in lifecycle order, with counts, Backlog first, and no onboarding phase", async () => {
+    stub();
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
+    expect(await rowsOf(user, "Filter by phase")).toEqual([
+      "All phases 5", "Backlog 1", "Ideation 1", "Requirements 2", "PRD 1",
+      "Architecture 0", "UX Design 0", "Task Breakdown 0", "Implementation 0",
+      "Code Review 0", "Testing 0", "Test Automation 0", "Security 0", "CI/CD 0",
+      "Deployment 0",
+    ]);
+  });
+
+  it("list every status in the card's own words, and filter by them", async () => {
+    stub();
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
+    expect(await rowsOf(user, "Filter by status")).toEqual([
+      "All statuses 5", "Not started 1", "Running 1", "Paused 0",
+      "Stopped responding 0", "Waiting for answer 0", "Waiting for review 1", "Done 1",
+      "Failed 1", "Cancelled 0",
+    ]);
+
+    await choose(user, "Filter by status", "Waiting for review");
+    expect(screen.getByText("Basket totals")).toBeDefined();
+    expect(screen.queryByText("Address book")).toBeNull();
+    // The closed box names the choice and its count — no brackets.
+    expect(screen.getByRole("button", { name: "Filter by status" }).textContent)
+      .toBe("Status: Waiting for review1");
+  });
+
+  it("count each choice under the OTHER filters already set", async () => {
+    stub();
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
+    await choose(user, "Filter by phase", "Requirements");
+    const statuses = await rowsOf(user, "Filter by status");
+    expect(statuses[0]).toBe("All statuses 2");
+    expect(statuses).toContain("Failed 1");
+    expect(statuses).toContain("Done 0");
+    // The phase list itself is not narrowed by its own choice.
+    expect((await rowsOf(user, "Filter by phase"))[0]).toBe("All phases 5");
+  });
+
+  it("list the roles that sign off phases, in lifecycle order — never Engineer or Admin", async () => {
+    const entry = (key: string, gate_role: string) => ({ key, label: key, agent_key: key, gate_role });
+    const catalog = {
+      plan: [entry("01_ideation", "product_owner"), entry("02_requirements", "product_owner"),
+             entry("03_prd", "product_owner"), entry("04_architecture", "architect"),
+             entry("05_ux_design", "designer"), entry("06_task_breakdown", "tech_lead"),
+             entry("00_onboarding", "product_owner")],
+      build: [entry("07_implementation", "tech_lead"), entry("08_code_review", "reviewer"),
+              entry("09_testing", "qa_lead"), entry("09b_test_automation", "qa_lead"),
+              entry("10_security", "security_engineer"), entry("11_cicd", "devops"),
+              entry("12_deployment", "devops")],
+      remediation: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
+      const u = String(url);
+      const ok = (body: unknown) =>
+        ({ ok: true, status: 200, statusText: "ok", text: async () => JSON.stringify(body) }) as Response;
+      if (u.includes("/auth/me")) return ok(me);
+      if (u.includes("/phases")) return ok(catalog);
+      if (u.includes("/work-items")) return ok(STORIES);
+      return ok([]);
+    }));
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
+    await waitFor(async () => expect((await rowsOf(user, "Filter by role")).length).toBeGreaterThan(1));
+    expect(await rowsOf(user, "Filter by role")).toEqual([
+      "All roles 5", "Product Owner 4", "Architect 0", "Designer 0", "Tech Lead 0",
+      "Reviewer 0", "QA Lead 0", "Security Engineer 0", "DevOps 0",
+    ]);
+  });
+
+  it("filter down to the Backlog", async () => {
+    stub();
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
+    await choose(user, "Filter by phase", "Backlog");
+    expect(screen.getByText("Saved payment methods")).toBeDefined();
+    expect(screen.queryByText("Discount codes")).toBeNull();
+  });
+
+  it("works from the keyboard: open, move, pick, and focus returns to the box", async () => {
+    stub();
+    const user = userEvent.setup();
+    renderWithProviders(<WorkItemsBoard />);
+
+    await waitFor(() => expect(screen.getByText("Address book")).toBeDefined());
+    const box = screen.getByRole("button", { name: "Filter by phase" });
+    box.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("listbox", { name: "Filter by phase" })).toBeDefined();
+    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");   // All phases → Backlog → Ideation
+    expect(screen.queryByRole("listbox", { name: "Filter by phase" })).toBeNull();
+    expect(document.activeElement).toBe(box);
+    expect(box.textContent).toBe("Phase: Ideation1");
+    expect(screen.queryByText("Saved payment methods")).toBeNull();
   });
 });
 

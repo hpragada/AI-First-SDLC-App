@@ -15,7 +15,8 @@ import {
   WriteError,
   writeErrorSentence,
 } from "../../components/ui";
-import { useCreateRunner, useRevokeRunner, useRunners } from "./hooks";
+import { useCreateRunner, useLastDisconnect, useRevokeRunner, useRunners } from "./hooks";
+import { fullWhen, whenLabel } from "./when";
 import { SetupReturnLink } from "./SetupReturnLink";
 
 // S-06 view states: no-project · not-started · token-generated (awaiting check-in) ·
@@ -36,19 +37,17 @@ const serveCmd = (token: string | null, tenant: string) =>
     token ?? "<your-token>"
   }`;
 
-// Human "last seen" from the real timestamp — replaces the old hardcoded "5m ago" that showed
-// regardless of when the companion actually checked in (Bugs.xlsx row 61 / RC-4).
-function sinceLabel(iso: string | null | undefined): string {
-  if (!iso) return "not yet";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "recently";
-  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (secs < 45) return "just now";
-  const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
+// A moment on this page ("last seen", "disconnected") in the viewer's own time zone, with the
+// full date, time and zone on hover. It used to be "16m ago" / "3d ago" (Bugs.xlsx row 61 / RC-4
+// replaced a hardcoded "5m ago"); the team asked on 2026-10-08 for one rule for every time here.
+function When({ iso }: { iso: string | null | undefined }) {
+  const label = whenLabel(iso);
+  if (!label) return <>not yet</>;
+  return (
+    <time dateTime={iso ?? undefined} title={fullWhen(iso)}>
+      {label}
+    </time>
+  );
 }
 
 export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
@@ -79,6 +78,10 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
     chosenProject ?? selectedProject?.project_id ?? memberships[0]?.project_id ?? "";
   const hasProject = memberships.length > 0;
 
+  const lastDisconnect = useLastDisconnect(projectId || undefined);
+  const disconnectedAt = lastDisconnect.data?.disconnected_at ?? null;
+  // Green only for the click that just happened in this tab; any later visit is a quiet note.
+  const justDisconnected = revokeRunner.isSuccess;
   const tenantId = currentUser?.tenant.id ?? "";
   const runner = runners.data?.[0];
   const derived: ConnectView = runner?.online
@@ -114,8 +117,8 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
       <div className="page-head__titles">
         <h1 className="t-h1">Connect your machine</h1>
         <p className="page-head__sub">
-          Phases run on <strong>your computer</strong> using your Claude Code subscription — no API
-          key, no usage billed to the workspace. Two one-time steps, like pairing a device.
+          Phases run on <strong>your computer</strong> using your Claude Code subscription. Two
+          one-time steps, like pairing a device.
         </p>
       </div>
       <SetupReturnLink />
@@ -130,7 +133,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
           <CardBody>
             <ConnStatus state="connected">
               Connected — <strong style={{ margin: "0 4px" }}>{runner?.machine || "your machine"}</strong>{" "}
-              · last seen {sinceLabel(runner?.last_seen)}
+              · last seen <When iso={runner?.last_seen} />
             </ConnStatus>
             <p className="t-sm u-body" style={{ marginTop: "var(--space-4)" }}>
               Your machine is ready. Trigger phases from any work item — they'll run here. Keep the{" "}
@@ -166,7 +169,7 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
         <Card>
           <CardBody>
             <ConnStatus state="offline">
-              Offline — {runner?.machine || "your machine"} · last seen {sinceLabel(runner?.last_seen)}
+              Offline — {runner?.machine || "your machine"} · last seen <When iso={runner?.last_seen} />
             </ConnStatus>
             <p className="t-sm u-body" style={{ marginTop: "var(--space-4)" }}>
               The companion isn't reachable right now. If it's mid-phase it will reconnect on its
@@ -272,6 +275,21 @@ export function ConnectMachine({ forceView }: { forceView?: ConnectView }) {
     <div className="canvas-pad" style={{ maxWidth: "840px" }}>
       {Head}
       <div className="u-stack">
+        {/* 2026-10-08: after Disconnect the page said "Offline · last seen 16m ago", an OLDER
+            key's heartbeat, because Disconnect only cancelled the newest key. Disconnect now
+            cancels them all, so the page lands here, and says when it happened. */}
+        {(justDisconnected || disconnectedAt) && (
+          <p
+            className={justDisconnected ? "disconnect-note disconnect-note--fresh" : "disconnect-note"}
+            role="status"
+          >
+            {justDisconnected ? (
+              <>Your machine was disconnected just now. It can&apos;t run phases until you connect it again.</>
+            ) : (
+              <>Your machine was disconnected <When iso={disconnectedAt} />.</>
+            )}
+          </p>
+        )}
         <Card>
           <CardBody>
             <div className="vstep" style={{ paddingBottom: 0 }}>

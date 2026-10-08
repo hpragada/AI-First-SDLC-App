@@ -23,6 +23,7 @@ from apps.registry.catalog import AGENT_CATALOG
 from apps.runs.enrollment import (
     authenticate_runner,
     enroll_runner,
+    last_disconnect,
     list_developer_enrollments,
     revoke_runner,
 )
@@ -304,6 +305,22 @@ class RunnerRevokeView(APIView):
         if not revoke_runner(tenant_id=tenant_id, enrollment_id=pk):
             return Response({"detail": "not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response({"id": str(pk), "status": "revoked"})
+
+
+class RunnerLastDisconnectView(APIView):
+    """GET /api/runners/last-disconnect/?project_id= — when the caller's machine was last
+    disconnected from that project, so Connect Machine can say so on any later visit."""
+
+    def get_permissions(self):
+        return [IsAuthenticatedMember()]
+
+    def get(self, request):
+        project_id = request.query_params.get("project_id")
+        if not project_id:
+            return Response({"project_id": "required"}, status=status.HTTP_400_BAD_REQUEST)
+        user = current_user(request)
+        return Response({"disconnected_at": last_disconnect(
+            tenant_id=_tenant_id(request), developer_id=str(user.id), project_id=project_id)})
 
 
 class RunnerStateView(APIView):
