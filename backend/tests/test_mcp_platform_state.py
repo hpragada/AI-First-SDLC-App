@@ -912,6 +912,9 @@ def test_server_registers_all_tools():
         # Document vision (Part B): 00e reads a document's stored page images and the text
         # already extracted from it.
         "get_source_extraction", "get_page_images",
+        # Code review (truncation register T4): read one file of the PR under review, a window
+        # at a time, so a file too long to inline whole is still reviewable whole.
+        "get_pr_file",
         # Accessibility judging (QA-02a / QA-11b): 09c reads its dispatched elements, the exact
         # WCAG wording and the captured crops, and answers one verdict per element.
         "get_a11y_batch", "get_a11y_screenshots", "get_wcag_grounding", "record_a11y_finding",

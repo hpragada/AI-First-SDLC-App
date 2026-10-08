@@ -27,8 +27,9 @@ from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
 from drivers import ClaudeDriver
-from manifest import compose_manifest
-from manifest.composer import TRUNCATION_MARKER
+from manifest import compose_manifest  # noqa: F401  (re-exported for callers/tests)
+from manifest.budget import chunks_for_budget
+from manifest.composer import TRUNCATION_MARKER, compose_manifest_with_report
 from manifest.rules import get_prompt_rules
 from storage import content_hash, s3_from_settings
 
@@ -73,7 +74,16 @@ _PLATFORM_TOOL_NAMES = [
 # `ToolSearch` loads tools the CLI deferred out of the agent's initial context; without it a
 # granted tool can be invisible to the agent (see `daemon.PLAN_ALLOWED_TOOLS` for the run that
 # proved it). Schemas only, for tools already granted here — no widening.
+#: Granted to the CODE REVIEW agent on top of the base list, and to no other agent. The base list
+#: above is shared by every phase, so a tool added there becomes a capability for all of them;
+#: reading a repository's files is 08's business alone.
+_REVIEW_ONLY_TOOL_NAMES = ["get_pr_file"]
+
 PLATFORM_TOOLS = [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES] + ["ToolSearch"]
+REVIEW_TOOLS = (
+    [f"mcp__platform-state__{name}" for name in _PLATFORM_TOOL_NAMES + _REVIEW_ONLY_TOOL_NAMES]
+    + ["ToolSearch"]
+)
 
 
 # ── injectable factories (tests monkeypatch these) ──────────────────
@@ -137,7 +147,8 @@ def _mcp_servers(tenant_id: str, project_id: str = "", run_id: str = "") -> dict
 
 
 # ── cores (idempotent by run_id) ────────────────────────────────────
-def _log_manifest_truncations(inp: AgentRunInput, manifest: str) -> None:
+def _log_manifest_truncations(inp: AgentRunInput, manifest: str,
+                              report: dict[str, dict[str, int]] | None = None) -> None:
     """Record which manifest sections were cut to fit their budget — never silently.
 
     Truncation used to leave no trace anywhere: not in the run's events, not on any screen. A
@@ -154,9 +165,19 @@ def _log_manifest_truncations(inp: AgentRunInput, manifest: str) -> None:
             cut.append(name)
     if not cut:
         return
+    # What each section was ALLOWED and what it ASKED FOR. With a fixed cap, naming the section
+    # was enough; with an allowance that moves, "Retrieved Knowledge was shortened" no longer
+    # says whether it was starved or simply enormous — and that is the difference anyone tuning
+    # this needs. Omitted when no budget was in play, so the payload stays as it was.
+    # The whole allocation, not just the cut sections: nine small entries, and seeing what the
+    # OTHER sections were holding is how you tell a starved section from a greedy neighbour.
+    # (`cut` carries display headers like "Retrieved Knowledge"; the report is keyed by budget
+    # field name, so matching the two up here would only invent a mapping that can drift.)
+    payload: dict = {"sections": cut, "phase": inp.phase}
+    if report:
+        payload["budget"] = report
     tools.log_event(
-        inp.tenant_id, "orchestrator", "manifest.truncated", "run", inp.run_id,
-        {"sections": cut, "phase": inp.phase},
+        inp.tenant_id, "orchestrator", "manifest.truncated", "run", inp.run_id, payload,
     )
 
 
@@ -173,18 +194,56 @@ def _review_history(tenant_id: str, run_id: str) -> list[dict]:
     return list((run.inputs or {}).get("review_history") or []) if run else []
 
 
+def _manifest_budget(inp: AgentRunInput) -> int:
+    """This run's whole-manifest token budget, from the model that will actually read it.
+
+    One indexed primary-key lookup, deliberately not cached. It sits beside `get_context`, which
+    already costs several queries plus a ranking pass over every knowledge chunk in the project,
+    so the cost is noise — and a process-level cache would go stale the moment the agent registry
+    is re-seeded, trading a measurable correctness risk for an unmeasurable saving.
+
+    The model is read from the AgentSpec ROW rather than carried on `inp`, and `agent_spec_id` is
+    read with `getattr`: `compose_manifest_core` is duck-typed — `BuildInput` flows through it, and
+    so does a bare SimpleNamespace — so ANY attribute assumed off `inp` is a dispatch-time
+    AttributeError waiting to happen. `test_compose_manifest_survives_a_build_shaped_input` exists
+    for exactly this and caught the first version of this function reading `inp.agent_spec_id`
+    directly. An input that cannot name its agent simply gets the fallback budget, which is the
+    size the platform used before any of this existed.
+    """
+    from apps.registry.models import AgentSpec
+    from manifest.budget import total_for_model
+
+    spec_id = getattr(inp, "agent_spec_id", None)
+    model = ((AgentSpec.objects.filter(id=spec_id, tenant_id=inp.tenant_id)
+              .values_list("recommended_model", flat=True).first()) if spec_id else "") or ""
+    total, used_fallback = total_for_model(model)
+    if used_fallback:
+        # Never silent. An unrecognised model still composes a manifest exactly the size the
+        # platform used to produce, but somebody has to learn that a new model needs a row —
+        # otherwise the first sign is a client wondering why their briefings got smaller.
+        tools.log_event(
+            inp.tenant_id, "orchestrator", "manifest.model_unknown", "run", inp.run_id,
+            {"model": model or "(not set)", "assumed_budget": total},
+        )
+    return total
+
+
 def compose_manifest_core(inp: AgentRunInput) -> str:
     review_history = _review_history(inp.tenant_id, inp.run_id)
     with tenant_context(inp.tenant_id):
         work_item = WorkItem.objects.get(id=inp.work_item_id, tenant_id=inp.tenant_id)
-        # Pass the work item so context scopes per-repo when it targets one (D5).
+        total_budget = _manifest_budget(inp)
+        # Retrieve what the budget can actually hold, rather than fetching a fixed eight chunks
+        # and letting the composer bin a third of them (truncation register T3).
         context = tools.get_context(
-            inp.tenant_id, inp.project_id, inp.phase, work_item_id=inp.work_item_id)
-        manifest = compose_manifest(
+            inp.tenant_id, inp.project_id, inp.phase, work_item_id=inp.work_item_id,
+            knowledge_chunks=chunks_for_budget(total_budget))
+        manifest, report = compose_manifest_with_report(
             context=context, work_item=tools._work_item(work_item),
             phase=inp.phase, rules=load_rules(), review_history=review_history,
+            total_budget=total_budget,
         )
-        _log_manifest_truncations(inp, manifest)
+        _log_manifest_truncations(inp, manifest, report)
         return manifest
 
 

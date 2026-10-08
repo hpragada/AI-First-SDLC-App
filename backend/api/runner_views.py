@@ -69,6 +69,10 @@ _BUILD_STATE_TOOLS = {
     # Reads an uploaded document's extracted text before any artifact exists for it — the vision
     # agent's counterpart to get_artifact_body when its work item names a source document.
     "get_source_extraction": tools.get_source_extraction,
+    # Code review only (see `runner.REVIEW_ONLY_STATE_TOOLS`): read one file of the PR under
+    # review, so a file too long to inline whole can still be reviewed whole. Reachable on this
+    # route because the route is the transport; what gates an AGENT is its allowlist.
+    "get_pr_file": tools.get_pr_file,
     "update_artifact": tools.update_artifact,
     "add_trace_edge": tools.add_trace_edge,
     "log_event": tools.log_event,

@@ -186,6 +186,11 @@ class BuiltinCodeIntel:
             "analysed_files": a["file_count"],
             "config_files_seen": len(a.get("config_files", [])),
             "content_search_complete": a.get("search_text_complete", True),
+            # Named, not counted. "Content search is incomplete" tells an agent to distrust every
+            # search result it has; these two tell it exactly which files to distrust, which is
+            # the difference between a usable assumption and a useless one.
+            "partially_indexed_files": a.get("partially_indexed_files", []),
+            "unsearchable_files": a.get("unsearchable_files", []),
         }
 
     def _a(self, repo: str) -> dict:
@@ -208,6 +213,8 @@ class BuiltinCodeIntel:
             "git_ok": a["git"].get("ok", True),
             "git_error": a["git"].get("error", ""),
             "skipped_files": a.get("skipped", {}),
+            "partially_indexed_files": a.get("partially_indexed_files", []),
+            "unsearchable_files": a.get("unsearchable_files", []),
         }
 
     def get_context(self, *, repo: str, targets: list[str]) -> dict:
@@ -325,6 +332,14 @@ def _analyze(ws: Path, repo: str) -> dict:
     languages: dict[str, int] = defaultdict(int)
     file_meta: dict[str, dict] = {}
     budget = _SEARCH_TEXT_BUDGET
+    # Which files content-search can only PARTLY see, and which it cannot see at all (T7). A
+    # whole file we skipped has always been reported, because the agent's own quality gate
+    # requires "any skipped files recorded as assumptions" - but a file that was read and then
+    # cut was reported as nothing at all. A 60,000-character legacy file was two-thirds invisible
+    # to search while the index looked perfectly healthy, which is a worse lie than a skip: the
+    # agent searches, finds nothing, and concludes the code does not do the thing.
+    partially_indexed: list[str] = []
+    not_searchable: list[str] = []
     for rel, ext, text in files:
         languages[ext] += 1
         file_meta[rel] = {"lang": ext, "lines": text.count("\n") + 1,
@@ -339,6 +354,14 @@ def _analyze(ws: Path, repo: str) -> dict:
             snippet = text[:_SEARCH_TEXT_PER_FILE].lower()
             file_meta[rel]["text"] = snippet
             budget -= len(snippet)
+            if len(text) > _SEARCH_TEXT_PER_FILE:
+                partially_indexed.append(rel)
+        else:
+            # Past the whole-repo budget the remaining files carry no searchable text at all.
+            # This was recorded only as one repo-wide boolean, so an agent could learn that
+            # SOMETHING was unsearchable but never which files - which is not enough to write
+            # down as an assumption, and so not enough to act on.
+            not_searchable.append(rel)
 
     git = _git_analytics(ws)
     edges, out_edges, in_edges = _dependency_graph(files)
@@ -360,7 +383,9 @@ def _analyze(ws: Path, repo: str) -> dict:
         "entry_points": entry_points,
         "config_files": config_files, "skipped": skipped,
         "signals": _signals(config_files),
-        "search_text_complete": budget > 0,
+        "search_text_complete": budget > 0 and not partially_indexed,
+        "partially_indexed_files": partially_indexed,
+        "unsearchable_files": not_searchable,
     }
 
 

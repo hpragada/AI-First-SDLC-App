@@ -1330,3 +1330,96 @@ nowhere.
   holds can be up to two minutes old, and a page left open since before the machine dropped knows
   nothing. Starting a phase **before** starting your machine still works on purpose — the dispatch
   waits for it, which is how onboarding is meant to go.
+
+---
+
+### TC-934 · The run console no longer reports the briefing being shortened
+
+**Why this exists.** Before 2026-10-07 a run showed **"Manifest truncated"** on almost every
+phase — one build run recorded it seven times, alternating implementation and code review through
+four remediation cycles. It was real: roughly a third of the knowledge retrieved for the agent was
+deleted on every dispatch. This case is the headline proof that it has stopped.
+
+**Setup.** A project with a connected machine and at least one work item that has produced a few
+documents, so the knowledge index has something to retrieve.
+
+**Steps**
+1. Trigger **Implementation** on a task and open the run console.
+2. Watch the console to completion (or to the first gate).
+3. Repeat for a second phase on the same work item.
+
+**Expected**
+- **"The agent's briefing was shortened to fit" never appears.** Neither does the older wording,
+  "Manifest truncated".
+- Every other console line reads exactly as it did before.
+
+**Pass / Fail**
+- PASS if neither phase reports a shortened briefing.
+- FAIL if either does. Note the phase and tell the team: the event payload now carries what each
+  section was allowed and what it asked for, so the cause is in the record rather than needing a
+  reconstruction.
+
+**Notes**
+- Bugs S.No 337. The message itself is not a bug and is deliberately kept — it is the instrument
+  that proves this. Seeing it on a very large project is information, not a regression.
+
+---
+
+### TC-935 · A long document can be read all the way through
+
+**Why this exists.** A document over the read limit used to come back with its beginning and a flag
+saying it had been shortened, and **there was no way to ask for the rest** — for anybody. A long
+PRD or architecture document is exactly what exceeds that limit, and every later phase reads it
+through that one call.
+
+**Setup.** A project with a document artifact larger than 400 KB (a long imported PRD, or a
+wireframe set).
+
+**Steps**
+1. Open the document in the artifact registry and preview it.
+2. Download it.
+3. Run a downstream phase that consumes that document (e.g. Architecture after a long PRD).
+4. Open the produced document and check it against the **end** of the source document.
+
+**Expected**
+- Preview and download are unchanged.
+- The produced document reflects content from the **whole** source, including its final sections —
+  not only its opening.
+
+**Pass / Fail**
+- PASS if requirements written at the END of the source are reflected downstream.
+- FAIL if the agent's output consistently covers only the first part of a long source.
+
+**Notes**
+- Bugs S.No 338. The agent reads this in windows now and is told to keep asking until there is no
+  more; a failure here looks like an agent that has simply not seen the later half.
+
+---
+
+### TC-936 · A code review reads a long file to the end
+
+**Why this exists.** A file longer than the inlined limit had its tail cut, and the review still
+reported as a **completed review**. Worse, when the diff could not be read at all the agent was
+told to "fetch the PR via the platform tools" when no tool it had could read a repository file —
+an impossible instruction, which most likely meant it reviewed nothing.
+
+**Setup.** A task whose implementation changes a file of more than ~16,000 characters.
+
+**Steps**
+1. Let the task run through Implementation and into Code Review.
+2. Open the review document and read the findings.
+3. Check whether any finding references the **later** part of the long file.
+
+**Expected**
+- The review discusses the whole file, not only its opening.
+- Where something was still too long to inline, the briefing names an exact position to resume
+  from, and the agent fetches the remainder itself.
+
+**Pass / Fail**
+- PASS if the review covers the end of a long file.
+- FAIL if findings stop consistently at the same point in long files — the signature of a cut tail.
+
+**Notes**
+- Bugs S.No 339 and 343. The reviewer is the only agent allowed to read repository files; if a
+  PLANNING phase is ever seen reading repository source, that is a separate and more serious
+  finding, so report it immediately.

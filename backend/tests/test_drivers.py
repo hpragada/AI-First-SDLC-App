@@ -339,8 +339,19 @@ async def test_review_task_is_sandboxed_to_platform_tools(tmp_path):
         mcp_servers={}, allowed_tools=["mcp__platform-state__get_artifact"],
         work_item=SimpleNamespace(id="rv1"))
     opts = captured["options"]
-    for blocked in ("Agent", "Bash", "Read", "Grep", "ToolSearch"):
+    for blocked in ("Agent", "Bash", "Read", "Grep"):
         assert blocked in opts.disallowed_tools
+    # `ToolSearch` is deliberately NOT denied, and this assertion is the guard on that decision
+    # rather than an omission. It was removed from the denylist on 2026-07-30 because the CLI
+    # DEFERS tools out of the initial context and ToolSearch is the only way to load them back:
+    # on run 457f65e1 the agent reported its granted write tools "not present in my available
+    # tool context" while a read tool worked in the same run, and wrote 39,417 characters of
+    # deliverables as prose instead of calling them. Denying it here would make every deferred
+    # platform-state tool — `get_pr_file` among them — invisible to the reviewer, which is the
+    # precise failure this review path cannot afford. It widens nothing: ToolSearch fetches
+    # SCHEMAS only, for tools already in `allowed_tools`, and execution is still gated by both
+    # lists. This test asserted the opposite and had been failing ever since.
+    assert "ToolSearch" not in opts.disallowed_tools
     assert opts.setting_sources == ["project"]
     # The inlined diff still reaches the model via the system-prompt file.
     assert "# Pull Request Under Review" in _system_prompt_file(opts).read_text(encoding="utf-8")

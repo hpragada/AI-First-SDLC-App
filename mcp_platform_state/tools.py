@@ -208,7 +208,8 @@ _SITUATIONAL_TAIL = 12
 
 
 # ── tools (spec §2 signatures; tenant_id is the bound scope) ─────────
-def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -> dict:
+def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None,
+                knowledge_chunks=None) -> dict:
     """Inputs the Manifest Composer renders, incl. Knowledge-Index retrieval (Phase 4).
 
     **Dependency-driven artifacts (Bugs S.No 190).** `relevant_artifacts` is a *required tier*
@@ -224,6 +225,13 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
     (always in scope, whatever repo authored it). The registry, traceability, and the
     Knowledge Index stay **project-scoped shared memory across repos** — knowledge retrieval
     is project-wide, never siloed per repo. Single-repo / repo-less runs are unchanged.
+
+    **How much knowledge to retrieve (truncation register T3).** `knowledge_chunks` is how many
+    chunks to fetch, derived by the caller from the dispatched model's context window
+    (`manifest.budget.chunks_for_budget`). It used to be a hardcoded eight while the composer then
+    cut the rendered section to 1,500 tokens, so roughly a third of what retrieval had just ranked
+    was binned on every dispatch and one chunk was cut mid-sentence. Omitting it keeps the old
+    eight, so every caller that does not care is unaffected.
     """
     from django.db.models import Q
 
@@ -337,19 +345,28 @@ def get_context(tenant_id, project_id, phase, work_item_id=None, repo_id=None) -
             # Declared inputs with no artifact yet — the composer renders these as a named gap.
             "missing_required_artifacts": missing_types,
             "recent_events": [_event(e) for e in events],
-            "retrieved_knowledge": _retrieve_knowledge(tenant_id, project_id, query),
+            "retrieved_knowledge": _retrieve_knowledge(
+                tenant_id, project_id, query, chunks=knowledge_chunks),
             "answered_clarifications": [_clarification(c) for c in answered],
         }
 
 
-def _retrieve_knowledge(tenant_id, project_id, query) -> list[dict]:
+def _retrieve_knowledge(tenant_id, project_id, query, chunks=None) -> list[dict]:
     """Knowledge-Index retrieval (Phase 4) — **project-scoped shared memory across repos**
     (D5), so a run in one repo can still retrieve another repo's knowledge + the shared
-    contract. Best-effort: a retrieval hiccup never breaks context composition."""
+    contract. Best-effort: a retrieval hiccup never breaks context composition.
+
+    `chunks` defaults to the eight this always fetched. The number is the caller's to choose
+    because only the caller knows the run's token budget; what matters here is that whatever is
+    fetched is whole — retrieval returns complete chunks and the composer now renders all of
+    them, so nothing is ranked and then thrown away."""
     try:
         from apps.knowledge.index import retrieve
 
-        return retrieve(tenant_id, project_id=project_id, query=query, k=8)
+        from manifest.budget import MIN_CHUNKS
+
+        return retrieve(tenant_id, project_id=project_id, query=query,
+                        k=int(chunks or MIN_CHUNKS))
     except Exception:  # noqa: BLE001
         return []
 
@@ -1310,13 +1327,19 @@ def stage_artifact_body(
     return {"s3_key": key, "content_hash": _content_hash(data), "bytes": len(data)}
 
 
-def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None) -> dict:
+def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None,
+                      start=0) -> dict:
     """Read-through the actual body of an artifact — the read-half agents need to consume
     content (e.g. the implementation agent reading a screen's wireframe HTML), since
     `get_artifact` returns pointers only. For a multi-state wireframe (external_ref.states),
     pass `state` (e.g. "state-1-default") to fetch ONE state; omit it to get the default/
     primary body plus the list of available state names. One state per call stays within the
-    MCP token budget. Never copies the body onto the row (#1/#3)."""
+    MCP token budget. Never copies the body onto the row (#1/#3).
+
+    A body larger than the read cap comes back one window at a time: `next_start` is the offset to
+    pass on the next call, and is None on the last window. Before this, an oversized body was
+    flagged `truncated` and the rest was simply unreachable — which is why a long PRD could not
+    be read in full by any downstream phase."""
     from django.core.exceptions import ValidationError
     from integrations.preview import artifact_body_for_agent
 
@@ -1330,7 +1353,7 @@ def get_artifact_body(tenant_id, artifact_id, state=None, object_store=None) -> 
                              "list_artifacts / get_context, not a shortened one."}
         return artifact_body_for_agent(
             artifact, state=state, object_store=object_store,
-            max_bytes=_MAX_BODY_READ_BYTES)
+            max_bytes=_MAX_BODY_READ_BYTES, start=start)
 
 
 # How many page images one get_page_images call returns — a small window so a many-page upload
@@ -1418,6 +1441,53 @@ def _build_page_image_window(pages: list, store, start: int) -> dict:
     nxt = start + max(1, consumed)      # never return the same start twice → no infinite paging
     return {"images": out, "total": total, "start": start, "returned": len(out),
             "next_start": nxt if nxt < total else None}
+
+
+#: How much of one repository file a single `get_pr_file` call returns. Shares the body-read cap
+#: because it rides the same MCP message, whose transport rejects anything over 1 MiB.
+_MAX_PR_FILE_READ_BYTES = _MAX_BODY_READ_BYTES
+
+
+def get_pr_file(tenant_id, pr_ref, path, start=0, project_id=None) -> dict:
+    """Read one file from a pull request, a window at a time. **Reviewer only.**
+
+    The review agent reasons over the diff the platform inlines into its briefing, and a file
+    longer than the inline window had its tail cut — while the review still reported as a
+    completed review. Worse, the briefing's own fallback line told the agent to "fetch the PR via
+    the platform tools" when **no granted tool could read a repository file at all**; an agent
+    that hit it was being asked to do something impossible, and reviewed nothing instead.
+
+    This is the tool that line always assumed. Read-only: it fetches through the CodeHost
+    capability (never GitHub directly, so a different host stays swappable) and writes nothing.
+
+    `pr_ref` is the stable "owner/name#N" handle from the briefing. Paginate exactly like
+    `get_source_extraction`: call again with `start=<next_start>` until `next_start` is null.
+    """
+    from integrations.registry import get_capability
+
+    start = max(0, int(start or 0))
+    with tenant_context(tenant_id):
+        try:
+            codehost = get_capability(tenant_id, "codehost")
+            pr = codehost.get_pull_request(pr_ref=str(pr_ref))
+            ref = getattr(pr, "sha", None) or getattr(pr, "head", None) or ""
+            content = codehost.get_file(repo=getattr(pr, "repo", None), path=str(path), ref=ref)
+        except Exception as exc:  # noqa: BLE001 — a read failure is an answer, never a crash
+            # Say which file and why. A reviewer that cannot read a file must be able to report
+            # that honestly rather than guess at its contents or silently skip it.
+            return {"path": str(path), "body": "", "total_bytes": 0, "start": start,
+                    "next_start": None,
+                    "error": f"could not read '{path}' from {pr_ref}: {exc}"}
+
+    # Slice by BYTE, like `get_source_extraction`, so one window is bounded regardless of what the
+    # characters cost; a split multi-byte character is dropped by "replace" at the seam and the
+    # next window resumes from the byte offset, so the file itself loses nothing.
+    raw = (content or "").encode("utf-8")
+    chunk = raw[start:start + _MAX_PR_FILE_READ_BYTES]
+    nxt = start + len(chunk)
+    return {"path": str(path), "body": chunk.decode("utf-8", "replace"),
+            "total_bytes": len(raw), "start": start,
+            "next_start": nxt if nxt < len(raw) else None}
 
 
 def get_source_extraction(tenant_id, source_document_id, start=0, object_store=None) -> dict:

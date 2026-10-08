@@ -547,12 +547,18 @@ def render_states(artifact, object_store=None) -> list[dict]:
 
 
 def artifact_body_for_agent(artifact, *, state=None, object_store=None,
-                            max_bytes=400_000) -> dict:
+                            max_bytes=400_000, start=0) -> dict:
     """One artifact body for an agent that must read content (get_artifact_body). For a
     multi-state artifact, `state` selects one document; without it, returns the default/primary
     body and lists the available state names so the caller can fetch the rest one at a time.
-    Truncates a single body at `max_bytes` to stay within the MCP token budget (never silently
-    — sets `truncated`)."""
+
+    Returns at most `max_bytes` starting at byte `start`, with `next_start` naming where the
+    following call should resume — the same contract `get_source_extraction` and
+    `get_page_images` have always had. Until this took an offset, a body over the cap was marked
+    `truncated` and the remainder could NEVER be read by anybody: the flag was honest and the
+    content was still gone. That is the sharpest form of the problem on a greenfield project,
+    because a long PRD or architecture document is exactly what exceeds the cap, and every
+    downstream phase reads it through this one call."""
     states = _states(artifact)
     names = [s.get("name") for s in states if isinstance(s, dict) and s.get("name")]
     if states:
@@ -565,25 +571,41 @@ def artifact_body_for_agent(artifact, *, state=None, object_store=None,
                         "error": f"no such state '{state}'"}
             body = _s3_body(match.get("s3_key"), object_store)
             return _cap_body({"state": state, "content_type": _DOC_CONTENT_TYPE,
-                              "available_states": names, "body": body}, max_bytes)
+                              "available_states": names, "body": body}, max_bytes, start)
         # No state requested: default/primary body + the menu of states to fetch next.
         body, content_type = _read_internal(artifact, object_store)
         return _cap_body({"state": None, "content_type": content_type or _DOC_CONTENT_TYPE,
-                          "available_states": names, "body": body}, max_bytes)
+                          "available_states": names, "body": body}, max_bytes, start)
     body, content_type = _read_internal(artifact, object_store)
     return _cap_body({"state": None, "content_type": content_type or _INTERNAL_CONTENT_TYPE,
-                      "available_states": [], "body": body}, max_bytes)
+                      "available_states": [], "body": body}, max_bytes, start)
 
 
-def _cap_body(payload: dict, max_bytes: int) -> dict:
+def _cap_body(payload: dict, max_bytes: int, start: int = 0) -> dict:
+    """A `max_bytes` window of the body beginning at `start`, plus where to resume.
+
+    `truncated` and `full_bytes` are kept exactly as they were. They now mean "there is more after
+    this window", which is what they always meant, and callers that never pass `start` see the
+    identical payload they saw before — including `internal_draft_body`'s siblings and the
+    SBOM preview, which read this with defaults.
+
+    The slice is by BYTE, like `get_source_extraction`, so a window boundary can land inside a
+    multi-byte character; decoding with "ignore" drops that partial character rather than raising.
+    One character at a seam is a far better outcome than a read that fails, and the next window
+    resumes from the byte offset, so nothing is lost from the document itself.
+    """
     body = payload.get("body") or ""
     encoded = body.encode("utf-8")
-    if len(encoded) > max_bytes:
-        payload["body"] = encoded[:max_bytes].decode("utf-8", "ignore")
-        payload["truncated"] = True
+    start = max(0, int(start or 0))
+    chunk = encoded[start:start + max_bytes]
+    payload["body"] = chunk.decode("utf-8", "ignore")
+    payload["total_bytes"] = len(encoded)
+    payload["start"] = start
+    nxt = start + len(chunk)
+    payload["next_start"] = nxt if nxt < len(encoded) else None
+    payload["truncated"] = payload["next_start"] is not None
+    if payload["truncated"]:
         payload["full_bytes"] = len(encoded)
-    else:
-        payload["truncated"] = False
     return payload
 
 

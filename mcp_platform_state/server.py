@@ -93,11 +93,34 @@ def stage_artifact_body(
 
 
 @server.tool()
-def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
+def get_artifact_body(artifact_id: str, state: str | None = None, start: int = 0) -> dict:
     """Read the actual BODY of an artifact (get_artifact returns pointers only). For a
     multi-state wireframe, pass `state` (e.g. "state-1-default") to fetch one document; omit
-    it to get the default body plus `available_states` to fetch the rest one call at a time."""
-    return tools.get_artifact_body(_tenant(), artifact_id, state)
+    it to get the default body plus `available_states` to fetch the rest one call at a time.
+
+    Paginated, like `get_source_extraction`: a large document arrives in pieces. When the result
+    has a `next_start` that is not null, call again with
+    `get_artifact_body(artifact_id, start=<next_start>)` and concatenate the bodies — otherwise
+    you are reading only the beginning of the document, and a requirement written in its second
+    half will be missing from everything you produce."""
+    # `start` is declared HERE, not merely on `tools.get_artifact_body`: the agent-facing schema is
+    # built from THIS signature, and a parameter missing from it is silently dropped rather than
+    # rejected (the trap `test_a_declared_format_survives_the_tool_an_agent_actually_calls` pins).
+    return tools.get_artifact_body(_tenant(), artifact_id, state, start=start)
+
+
+@server.tool()
+def get_pr_file(pr_ref: str, path: str, start: int = 0) -> dict:
+    """Read one file from the pull request under review, straight from the repository.
+
+    Use this whenever the inlined diff in your briefing is marked as truncated, or says the diff
+    is unavailable: the inlined copy is a convenience and this is the source. Reviewing only the
+    part of a file that happened to fit, and reporting the review as complete, is the one outcome
+    this tool exists to prevent.
+
+    `pr_ref` is the "owner/name#N" handle named at the top of the Pull Request section. Paginated:
+    when `next_start` is not null, call again with `start=<next_start>` and join the pieces."""
+    return tools.get_pr_file(_tenant(), pr_ref, path, start=start)
 
 
 @server.tool()

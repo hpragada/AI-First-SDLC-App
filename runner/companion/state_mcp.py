@@ -44,11 +44,27 @@ def build_server(
         return client.call("get_artifact", artifact_id=artifact_id)
 
     @server.tool()
-    def get_artifact_body(artifact_id: str, state: str | None = None) -> dict:
+    def get_artifact_body(artifact_id: str, state: str | None = None, start: int = 0) -> dict:
         """Read the actual BODY of an artifact (get_artifact returns pointers only). For a
         multi-state wireframe, pass `state` (e.g. "state-1-default") for one document; omit it
-        to get the default body plus `available_states` to fetch the rest one call at a time."""
-        return client.call("get_artifact_body", artifact_id=artifact_id, state=state)
+        to get the default body plus `available_states` to fetch the rest one call at a time.
+
+        Paginated: when the result's `next_start` is not null, call again with
+        `get_artifact_body(artifact_id, start=<next_start>)` and join the pieces, or you are
+        working from only the beginning of the document."""
+        return client.call("get_artifact_body", artifact_id=artifact_id, state=state,
+                           start=start)
+
+    @server.tool()
+    def get_pr_file(pr_ref: str, path: str, start: int = 0) -> dict:
+        """Read one file from the pull request under review, straight from the repository.
+
+        Use this whenever the inlined diff in your briefing is marked as truncated, or says the
+        diff is unavailable. Reviewing only the part of a file that happened to fit, and
+        reporting that review as complete, is what this exists to prevent.
+
+        Paginated: when `next_start` is not null, call again with `start=<next_start>`."""
+        return client.call("get_pr_file", pr_ref=pr_ref, path=path, start=start)
 
     @server.tool()
     def get_source_extraction(source_document_id: str, start: int = 0) -> dict:

@@ -1,8 +1,36 @@
 # Truncation — full issue register, team decisions, and recommended fixes
 
-**Status:** analysis + decisions recorded. **T5 built 2026-08-17; T2 built 2026-09-03.** The
-remaining items are still open — the team chooses which to implement and in what order. Each entry
-carries its own build note, so this header is a pointer, not the record.
+**Status: CLOSED 2026-10-07.** Every item in this register is built. T5 2026-08-17, T2 2026-09-03,
+T9 + T13 2026-09-21, T6 (undated, in the test-report work), and the remaining six — T1, T3, T4, T7,
+T8, T10 — on 2026-10-07, together with the two items §6 had recorded as future work: the elastic
+budget (D3) and scaling the caps from the model's context window. Each entry carries its own build
+note, so this header is a pointer, not the record.
+
+**Why the last six landed in one pass.** The team's reading was that the mechanism existed to
+protect a model's context window, that the window had grown roughly fivefold since the caps were
+written, and that nothing in the platform had noticed. That was correct, and worse than they
+thought: **no cap anywhere read a model's window at all.** The caps were sized on 2026-06-22
+against an assumed 200,000 tokens. The floor model in use is `claude-sonnet-4-6` at ~1,000,000, so
+the whole manifest at its theoretical maximum (15,150 tokens) is 1.5% of the window and a measured
+one (5,353) is half a percent. We were deleting what an agent needed to protect a budget that had
+not been scarce for months.
+
+**The single most frequent truncation in the product was T3, and it was never touched.** Retrieval
+fetched 8 chunks of ~1,200 characters (~2,400 tokens) into a section capped at 1,500, so ~37% was
+discarded on every dispatch that retrieved a full set, one chunk cut mid-sentence. That is
+arithmetic, not an edge case, which is why a QA pass saw `Manifest truncated` on almost every
+phase — seven times in one run, alternating implementation and code_review.
+
+It survived three rounds of this register because of **one wrong comment**: `retrieved_knowledge`
+was marked `# unbounded growth — cap stays`. It is not unbounded; `k=8` closes it. §1 of this
+document said so on 2026-08-04 and the comment was never corrected, so each time the caps were
+revisited this one was passed over as the section that had to keep its cap.
+
+**What the fix was NOT.** No cap was raised. That was rejected with arithmetic on 2026-08-04
+(1,500 + 20% is still ~680 short of 2,478) and the standard has held through all eleven items:
+every one removed the reason the cap bit, or made crossing it recoverable. The caps are now floors
+under a total derived from the dispatched model, retrieval fetches only what will be rendered, and
+the three tier-2 issues became paginated reads instead of final losses.
 
 **Date:** 2026-08-04
 **Raised by:** a `Manifest truncated — implementation` line on the run console during the first
@@ -101,6 +129,25 @@ call.
 **Recommended fix:** add a `start` offset and return `next_start`, mirroring
 `get_source_extraction` exactly. Established pattern, same file, low risk.
 
+**BUILT 2026-10-07 — exactly as recommended.** `get_artifact_body(artifact_id, state=None,
+start=0)` now returns `total_bytes`, `start` and `next_start`, with `next_start` null on the last
+window. `_cap_body` does the slicing, so all three of its branches (state hit, default body +
+state menu, plain internal) paginate identically; `truncated` and `full_bytes` are kept and mean
+what they always meant — there is more after this window — so every caller that does not pass an
+offset sees the payload it saw before.
+
+`start` is declared on the MCP wrapper signature as well as on the function, because FastMCP builds
+the agent-facing schema from the wrapper and **silently drops** a parameter missing from it (the
+trap `test_a_declared_format_survives_the_tool_an_agent_actually_calls` already pins). The
+companion proxy carries it too, or the tool would page on the server path and not on the one the
+companion actually uses.
+
+Tests: `test_truncation_recovery.py` reassembles a document from its windows and asserts the result
+is byte-identical to the original; that a body which fits is unchanged and reports
+`truncated: False`; and that a window boundary landing inside a multi-byte character does not break
+the read — a client whose requirements are written in Hindi must not hit a decode error on page
+two. No test exercised `get_source_extraction`'s pagination either, so that gap closes with it.
+
 ---
 
 #### T2 · `current_work_item` capped at 650 tokens — cuts the work item description
@@ -173,6 +220,26 @@ these chunks are summaries *about* code it can read directly.
 2. **Pointer line (D1/D2).** Name what was left out and how to get it: *"3 further knowledge
    chunks matched — call `get_context()` to read them in full."*
 
+**BUILT 2026-10-07 — part 1 as recommended, part 2 generalised.** Retrieval is now budget-aware:
+`get_context(..., knowledge_chunks=N)` passes the count down to `retrieve()`, and the orchestrator
+derives N from the run's budget (`manifest.budget.chunks_for_budget`) as
+`clamp(budget // 8 // 300, 8, 24)`. Eight is the floor, never the rule — this change may only ever
+give an agent more context than it had. Twenty-four is the ceiling, because retrieval is ranked
+best-first and the fortieth chunk competes for attention with the first.
+
+Nothing is fetched and then discarded: the provisional knowledge allowance that sizes retrieval and
+the allocator's ceiling for that section are the same number by construction, and a grower's
+ceiling is its own demand. `test_nothing_retrieved_is_ever_discarded` renders the exact failing
+shape — eight chunks over the old cap — and asserts eight chunks out and no truncation marker.
+
+`token_count` was already stored on every chunk at index time and thrown away on the way out; it is
+carried now rather than re-estimated.
+
+The pointer line became a general mechanism rather than a knowledge-only one — see T8.
+
+**And the comment that caused this is corrected.** `retrieved_knowledge` no longer claims to be
+unbounded growth; it says what §1 established, that `k` closes it.
+
 ---
 
 ### Tier 2 — visible but unrecoverable
@@ -220,6 +287,39 @@ The truncation marker then becomes actionable:
 **Scope (D4a, confirmed): reviewer only.** `_PLATFORM_TOOL_NAMES` is a single list shared by every
 agent, so this requires splitting it into a base list plus per-agent extras. That is the larger
 part of the work, and it establishes least-privilege for every future tool.
+
+**BUILT 2026-10-07 — as decided in D4/D4a, with one correction to the scope above.**
+`get_pr_file(pr_ref, path, start=0)` is a read-only tool routed through the **CodeHost capability**
+(never GitHub directly, per non-negotiable #9), paginated on the `get_source_extraction` pattern. A
+file it cannot read returns an `error` naming the file rather than an empty body: "this file is
+empty" is a far more damaging answer to a reviewer than "I could not open this file" — one invites
+a verdict, the other blocks it.
+
+The truncation marker is now actionable and names the offset:
+`… (truncated at 50,000 of 147,300 chars — call get_pr_file(path="src/x.ts", start=50000) for the
+rest)`. And the per-file window is derived from the run's budget rather than fixed at 16,000, with
+16,000 as a **floor** — a budget-derived number coming out lower would mean this change had made a
+code review read less of the code, which is the one direction it must never move.
+
+**The live bug in this section is fixed.** The fallback line now names a call that exists.
+
+**The scope correction.** D4a assumed `_PLATFORM_TOOL_NAMES` was the list the reviewer gets. It is
+not. `worker.py` registers `CompanionReviewProvider`, so **code review runs on the enrolled
+companion**, with `PLAN_ALLOWED_TOOLS` built from `BUILD_STATE_TOOLS` — a different list entirely.
+The split therefore had to happen twice, and the tool wired on four surfaces (implementation, MCP
+server, companion proxy + state route, and both grant lists) or it would have been invisible or
+unreachable. Both splits are base-plus-extras, as D4a intended: `REVIEW_TOOLS` and
+`REVIEW_ALLOWED_TOOLS` are supersets of the base lists, asserted as such by test, so the reviewer
+gains a tool and no planning agent does.
+
+**One further thing this depended on, found while building it.**
+`test_review_task_is_sandboxed_to_platform_tools` asserted `ToolSearch` was DENIED to the reviewer.
+It had been failing since 2026-07-30, when ToolSearch was deliberately removed from the denylist
+after run `457f65e1` — where blocking it made granted platform-state tools invisible and the agent
+wrote 39,417 characters of deliverables as prose instead of calling them. Had anyone "fixed" that
+test by making the code match it, **`get_pr_file` would have been granted and unreachable**, which
+is the same failure this item exists to end. The test now asserts the opposite, with the run id in
+a comment so it is not flipped back.
 
 ---
 
@@ -287,6 +387,15 @@ than it affects an agent.
 
 **Recommended fix:** low priority. Raise if the team sees it bite in practice.
 
+**Already built, and the model for everything else here.** The cap was not raised: the full text is
+parsed and filed as the run's `test_report` artifact body in the object store, and the short summary
+that stays on the row — and goes to Jira, which **fails the push** above 32,767 characters and
+breaks the defect loop — is bounded in `apps.quality.services` where that limit actually exists. A
+shortened row says where the rest is. What remains in `junit.py` is `_MAX_EVIDENCE = 256_000`, a
+runaway-log guard: a single test whose failure text passes a quarter of a megabyte is emitting a
+log, not evidence. Its comment states the standard this register has held to since — *"raising this
+number is not how you fix a truncated report"*.
+
 ---
 
 ### Tier 3 — silent but currently low-pressure
@@ -310,6 +419,18 @@ are too large — and **does** report them via `skipped_files`.
 **Recommended fix:** report partially-indexed files alongside `skipped_files`, reusing the
 mechanism already there. Brownfield-only.
 
+**BUILT 2026-10-07 — as recommended, and it was worse than recorded here.** `index_report` and
+`get_overview` now carry `partially_indexed_files` beside `skipped_files`.
+
+The extra finding: past the whole-repo `_SEARCH_TEXT_BUDGET`, remaining files get **no searchable
+text at all**, and that was recorded only as one repo-wide boolean with no test. Those files are
+named too, as `unsearchable_files`. A count cannot be written down as an assumption; a list can.
+
+`search_text_complete` now accounts for partially-indexed files as well, so the summary boolean can
+no longer claim a clean read while individual files are two-thirds invisible. Both agent-facing
+docstrings in `codeintel_mcp.py` — which already taught the `skipped_files` habit — say plainly
+that a search missing a term in one of these files is **not** evidence the codebase lacks it.
+
 ---
 
 #### T8 · `project` and `important_context`, 2,000 tokens each
@@ -323,6 +444,20 @@ but is unsignposted.
 
 **Recommended fix:** pointer line (D1/D2). **No cap change** — these are the sections where an
 unbounded paste is a real risk, so the ceiling should stay.
+
+**BUILT 2026-10-07 — pointer line, no cap change, and generalised past these two sections.**
+`_section()` takes a `recovery` sentence and appends it **only when something was actually
+removed**, so a section that fits reads exactly as it always did and an agent is never told to go
+and fetch what is already in front of it. `project`, `important_context`, `recent_events`,
+`answered_clarifications` and `retrieved_knowledge` all carry one.
+
+`# Rules` deliberately does not, because no tool returns the rules — a sentence promising a call
+that does not exist is worse than silence, which is precisely what the reviewer's "fetch the PR via
+the platform tools" turned out to cost (T4). T10's size test guards that section instead.
+
+Their ceilings stay. These are the two sections a free-text paste can fill, so under the elastic
+budget they sit in the human-text tier with a hard ceiling of 4x their floor: generous for genuine
+steering, bounded against one pathological paste.
 
 ---
 
@@ -403,6 +538,15 @@ of every phase thereafter.
 instead of quietly truncating. Cheap and permanent. **Note:** D2 adds a new rule to this section,
 which makes the test more valuable, not less.
 
+**BUILT 2026-10-07 — exactly as recommended.**
+`test_the_rules_we_author_fit_their_budget_with_room_to_spare` asserts the authored rules fit inside
+90% of their budget. They measure 2,183 tokens against 3,000.
+
+The margin is deliberate: failing only at 100% would mean the rule that crosses the line is also the
+rule nobody can see was lost. The existing `test_composer_renders_distilled_rules_in_rules_section`
+could never have caught this — both strings it looks for sit near the top, so it passes happily with
+the whole end of the rules missing, and the file is append-only in practice.
+
 ---
 
 #### T11 · Bounded and working as designed — no action
@@ -462,15 +606,37 @@ tuning caps with measurements rather than guesses.
 
 ---
 
-## 6. Recorded as future work (not part of this change)
+## 6. Recorded as future work — **both built 2026-10-07**
 
-- **Elastic budget (D3).** A manifest total with per-section floors, sections borrowing unused
-  headroom. The evidence run makes the case: 5,597 tokens idle while one section was 1,000 short.
-  Right end state; changes every manifest, so it deserves its own PR.
-- **Scale caps from the model's context window.** Already flagged `FUTURE` in the composer
-  docstring (`composer.py:55`). Becomes real when model selection is exposed to users — a fixed
-  1,500 means very different things on a small model and a large one.
-- **T6** test-evidence cap, if it bites.
+- **Elastic budget (D3). BUILT.** `composer.allocate()` gives every section its old cap as a FLOOR
+  and shares the spare. A section is charged only `min(floor, demand)`, so one needing 31 tokens
+  reserves 31 rather than its whole 2,000 — the evidence run's 5,597 idle tokens become available
+  to the section that was 1,000 short. Spare is distributed in strict priority tiers, not one
+  proportional pass, so a project with thousands of events cannot soak up headroom that `# Rules`
+  needs for correctness; `# Rules` is the one section with no recovery path at all.
+
+  `total=None` returns the floors untouched, which is the path every caller outside the
+  orchestrator takes, so **the output is byte-identical to before** — pinned by a golden set of
+  eight manifests including the cases that truncate. The allocator is pure, integer-only and
+  order-independent, with a property test over randomised inputs (including zero and negative
+  totals) asserting no section ever lands below its floor. That is the single outcome that must be
+  impossible, because the tempting invariant `sum(allowance) <= total` is FALSE here and "fixing"
+  it by clamping is exactly how a section would end up smaller than it is today.
+
+- **Scale caps from the model's context window. BUILT.** `manifest/budget.py` is the first
+  model-to-metadata map in the repo. The total is 5% of the dispatched model's window, capped at
+  60,000 tokens; an unrecognised model falls back to **200,000 — the exact assumption the original
+  caps were built on**, so an unfamiliar engine reproduces the platform's long-standing behaviour
+  rather than inventing a number, and logs an event saying it did. The `FUTURE:` note in the
+  composer docstring is deleted, because it is done.
+
+  The ceiling is deliberate. "Nothing is lost" and "use the whole window" are different goals and
+  only the first is worth having: the manifest is not the only thing in an agent's context, and a
+  larger briefing costs latency and attention on every dispatch — seven of them in one remediation
+  loop. On `claude-sonnet-4-6` the budget is 50,000 against a 15,150 worst case, over three times
+  the room needed for nothing to be cut.
+
+- **T6** test-evidence cap — already correct; see its entry above.
 
 ---
 
@@ -506,22 +672,27 @@ Grouped by blast radius, per D8 (own PR off `develop`).
 
 ## 8. What has NOT been done
 
-*Corrected 2026-09-17. This section said "nothing in this document has been implemented", which was
-true the day it was written and has been false since 17 August. **T5 was built on 2026-08-17 and T2
-on 2026-09-03** — both are recorded in their own sections above and in this file's own status line.
-The list below is what genuinely remains.*
+**Nothing. The register is closed (2026-10-07).** All thirteen items are built, and so are the two
+pieces §6 had recorded as future work.
 
-**Still outstanding.** *(T9 and T13 were built on 2026-09-21 and are no longer on this list —
-between them they remove both live truncations seen on run `5b4a1bab` without moving a cap.)*
+*History, kept because it is the useful part. This section has been wrong twice. It said "nothing
+in this document has been implemented", which was true the day it was written and false from 17
+August; that was corrected on 2026-09-17. It then listed T3 as the one outstanding item for six
+weeks — the item that was firing on **every single dispatch**, while the register's own §1 already
+contained the measurement proving its cap was wrong. The lesson the team drew is the one worth
+keeping: a register is only as good as the pass that re-reads it against the code, and a comment in
+the source (`# unbounded growth — cap stays`) outlived three readings of a document that
+contradicted it.*
 
-1. Raise `retrieved_knowledge` 1,500 → 2,500 to match retrieval's own `k=8` ceiling (T3), or do the
-   budget-aware retrieval that removes the ceiling question entirely
+**Carried forward, outside this register:**
 
-**Already built, and no longer outstanding:** T2 (`current_work_item` no longer truncates the
-description), T5 (secret-scan findings recorded as a registered artifact), and T9 + T13 (answered
-clarifications deduplicated and replayed newest first, 2026-09-21).
-
-No file was modified to produce this document *when it was first written*. The original evidence
-run `6a7ae08e` completed normally — it registered a `code` artifact, opened
-`https://github.com/TARUN51/medslot-single-repo/pull/36`, and proceeded to code review — with the
-`Retrieved Knowledge` truncation described in T3 in effect.
+- The truncation event's section splitter divides on `"\n# "`, so a markdown heading inside a work
+  item's description or a knowledge chunk is mis-attributed as a section name. Pre-existing, found
+  while adding the allocation report, deliberately not fixed here — widening this change for it
+  would have bought nothing the team asked for.
+- `_render_remediation_section` and `_render_open_findings` are appended outside the manifest budget
+  and stay **uncapped on purpose**. They were reviewed as part of this work: both are instruction
+  sets — the findings an agent must fix — so capping them would introduce a truncation that does not
+  exist today, of the worst kind. Cutting the tail of a list of required fixes is the same failure
+  as cutting a work item's acceptance criteria (T2), which cost eighteen days. Their size is bounded
+  by the open findings on one work item, not by a project's age.

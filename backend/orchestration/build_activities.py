@@ -1290,7 +1290,17 @@ def run_code_review_core(inp: BuildInput) -> dict:
 
 def _render_remediation_section(brief: list[dict]) -> str:
     """Render the open REM findings as a manifest section the 07 agent re-runs against — same
-    idea as the reviewer's PR-diff section. The agent fixes these on the SAME branch."""
+    idea as the reviewer's PR-diff section. The agent fixes these on the SAME branch.
+
+    **Deliberately uncapped, and it should stay that way.** This was reviewed when the manifest
+    budget was built, as one of the sections appended outside it. Giving it a cap would have
+    introduced a truncation that does not exist today, and of the worst possible kind: this list
+    IS the instruction set — the findings the agent must fix — so a cut tail silently drops work
+    the review has already demanded, and the next cycle reports it unfixed. That is the same
+    failure as cutting a work item's acceptance criteria (register T2), which cost eighteen days.
+    Its size is bounded by the number of open findings on one work item, which the remediation
+    loop already limits; it is not a section that grows with the project's age.
+    """
     lines = ["# Remediation Items",
              "The code review returned blocking findings. Address EACH of the following on the "
              "current branch (do not open a new PR — push fixes to the existing one), then report:",
@@ -1380,11 +1390,14 @@ def dispatch_reviewer_revision_core(inp: BuildInput, direction: str) -> dict:
     written HERE, before the Approval is reset — reopening the gate lets the next decision
     overwrite `Approval.comment`, so the reviewer's earlier words would otherwise be lost.
     """
+    from dataclasses import replace
+
     from django.conf import settings
 
+    from manifest.budget import review_direction_tokens
     from manifest.composer import TokenBudget, _render_review_direction
 
-    from .activities import build_review_round
+    from .activities import _manifest_budget, build_review_round
 
     with tenant_context(inp.tenant_id):
         run = Run.objects.get(id=inp.run_id, tenant_id=inp.tenant_id)
@@ -1394,9 +1407,16 @@ def dispatch_reviewer_revision_core(inp: BuildInput, direction: str) -> dict:
     history = history + [entry]
 
     # Same renderer the planning path uses, so a reviewer's direction reads identically to an
-    # agent whichever workflow it arrives through.
+    # agent whichever workflow it arrives through — and now the same BUDGET too. It used to pass
+    # a bare default, which quietly made this the one section in the product that could not grow
+    # with the model: every other path went elastic while the words a human had just typed stayed
+    # capped at 3,000 on the one path whose entire purpose is to deliver them.
+    base = TokenBudget()
+    direction_budget = replace(
+        base, review_direction=review_direction_tokens(_manifest_budget(inp),
+                                                       base.review_direction))
     manifest = (f"{compose_manifest_core(inp)}\n\n"
-                f"{_render_review_direction(history, TokenBudget())}")
+                f"{_render_review_direction(history, direction_budget)}")
     agent_body, model = _load_agent_body(inp.agent_spec_id, inp.tenant_id)
     payload = {
         "run_id": inp.run_id, "tenant_id": inp.tenant_id, "project_id": inp.project_id,

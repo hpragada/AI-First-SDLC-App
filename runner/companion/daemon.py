@@ -29,7 +29,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .guardrails import playwright_tools_for
-from .runner import BUILD_STATE_TOOLS, BuildTask, _SpecShim, _WorkItemShim, run_build
+from .runner import (
+    BUILD_STATE_TOOLS,
+    REVIEW_ONLY_STATE_TOOLS,
+    BuildTask,
+    _SpecShim,
+    _WorkItemShim,
+    run_build,
+)
 
 # Planning/review expose the platform-state tools (incl. ask_human) over the remote MCP; no
 # filesystem/Bash (those phases reason over registered context, not a working tree).
@@ -40,6 +47,12 @@ from .runner import BUILD_STATE_TOOLS, BuildTask, _SpecShim, _WorkItemShim, run_
 # "not present in my available tool context" while `list_artifacts` worked in the same run. It is
 # not a hole in the sandbox — ToolSearch only fetches SCHEMAS for tools already granted here.
 PLAN_ALLOWED_TOOLS = [f"mcp__platform-state__{name}" for name in BUILD_STATE_TOOLS] + ["ToolSearch"]
+
+#: What the CODE REVIEW agent gets: the same base, plus the tools only it may hold. Built
+#: here rather than folded into BUILD_STATE_TOOLS so a build agent never inherits them.
+REVIEW_ALLOWED_TOOLS = PLAN_ALLOWED_TOOLS + [
+    f"mcp__platform-state__{name}" for name in REVIEW_ONLY_STATE_TOOLS
+]
 
 
 class DaemonError(Exception):
@@ -517,7 +530,8 @@ class CompanionDaemon:
         runner = driver.run_review_task if review else driver.run_planning_task
         run_kwargs = dict(
             manifest=payload.get("manifest", ""), agent_spec=spec,
-            allowed_tools=PLAN_ALLOWED_TOOLS, work_item=work_item,
+            allowed_tools=REVIEW_ALLOWED_TOOLS if review else PLAN_ALLOWED_TOOLS,
+            work_item=work_item,
         )
         # A browser, for the one planning phase that operates a live application (09d, G6a).
         # Scoped to the address the platform sent with the task and to nothing else; a task that

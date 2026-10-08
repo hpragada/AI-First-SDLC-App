@@ -72,6 +72,13 @@ BUILD_STATE_TOOLS = [
     "record_a11y_journey_finding",
     "finish_a11y_journey",
 ]
+#: Granted to the CODE REVIEW agent and to nothing else. Every other list here is shared by every
+#: phase, which is why this one is separate: 08 is the only agent with any business reading a
+#: repository's files, and the whole point of splitting the list is that a tool added for one
+#: agent does not quietly become a capability for all of them. A planning agent that could read
+#: arbitrary repository files would be a wider sandbox than PG12 describes.
+REVIEW_ONLY_STATE_TOOLS = ["get_pr_file"]
+
 # NOT in the list above, deliberately: `ingest_a11y_candidates`, and QA-17's `start_a11y_audit`
 # / `ingest_a11y_audit_screen` / `finish_a11y_audit`. The COMPANION posts the capture (see
 # `run_build` and `a11yaudit`), not the agent — the file is machine truth from a real visit to

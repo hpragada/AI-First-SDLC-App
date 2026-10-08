@@ -26,7 +26,7 @@ and Knowledge Index remain project-wide shared memory.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 # Rough heuristic: ~4 chars per token. Good enough to bound section sizes.
@@ -51,9 +51,14 @@ class TokenBudget:
     OTP, no". The whole manifest was 3,594 tokens, under 2% of the model's window: we were cutting
     a document that had no size problem at all. Raised with real headroom.
 
-    Worst case if every section fills its cap is ~12,150 tokens (~6% of a 200k window); a typical
-    run is closer to 3,600. FUTURE: when model selection is exposed to users these should scale
-    from the chosen model's context window rather than being fixed — see the brownfield doc.
+    **These are FLOORS, not ceilings, since 2026-10-07.** They are what a section is guaranteed,
+    and `allocate()` hands out whatever the model's window affords above them — so the numbers
+    below now answer "what must this section always have?" rather than "what may it never exceed?".
+    Lower one and you take context away from an agent; the floors only ever move up.
+
+    The note that used to sit here said these *should* one day scale from the model's window. They
+    do. The total comes from `manifest.budget.total_for_model` and the caps stopped being the thing
+    that decides what an agent reads.
     """
 
     project: int = 2000              # was 800  — user-authored profile, measured 906
@@ -101,9 +106,150 @@ def _json_block(label: str, value: Any) -> str:
     return f"\n**{label}**:\n```json\n{json.dumps(value, indent=2, default=str)}\n```"
 
 
-def _section(header: str, body: str, max_tokens: int) -> str:
+def _section(header: str, body: str, max_tokens: int, recovery: str = "") -> str:
+    """One manifest section, trimmed to its allowance, saying how to get the rest if it was cut.
+
+    `recovery` is the call that returns this section's content in full. It is appended ONLY when
+    something was actually removed, so a section that fits reads exactly as it always did — and
+    an agent is never told to go and fetch a thing it already has in front of it.
+
+    The register's rule (D1/D2) is that content may be shortened but the loss is never silent and
+    never final. A truncation marker alone met half of that: it said something had gone and left
+    the reader with no way to act, which on a real run is indistinguishable from the content not
+    existing. `# Relevant Artifacts` has always named its fallback call; this gives the same
+    courtesy to every other section that has one.
+    """
     body = body.strip() or "_none_"
-    return f"# {header}\n\n{_truncate(body, max_tokens)}"
+    trimmed = _truncate(body, max_tokens)
+    if recovery and TRUNCATION_MARKER in trimmed:
+        trimmed = f"{trimmed}\n{recovery}"
+    return f"# {header}\n\n{trimmed}"
+
+
+# ── elastic budget ──────────────────────────────────────────────────
+# The caps above are FLOORS, not ceilings. When the dispatched model's window affords more than
+# the floors need, the spare is handed to the sections that are actually short — which on a real
+# run is `retrieved_knowledge`, measured at 1,479 tokens against a 1,500 cap while 5,597 tokens
+# sat idle in sections that needed a fraction of what they were allocated.
+
+#: A cap so large nothing reaches it, used only to MEASURE a section's true demand. Never emitted.
+_MEASURING_CAP = 1_000_000_000
+
+#: Every budgeted section, in one fixed order so the allocation is a function of its inputs and
+#: not of dict iteration. Keys are `TokenBudget` field names.
+_CANONICAL_ORDER = (
+    "rules", "project", "important_context", "review_direction", "current_work_item",
+    "answered_clarifications", "relevant_artifacts", "recent_events", "retrieved_knowledge",
+)
+
+#: `current_work_item` never grows. Only its DESCRIPTION is exempt from the cap, deliberately
+#: (T2, see `_render_work_item`); the metadata lines are bounded and repetitive, and a runaway
+#: title must still be cut visibly rather than quietly granted ten thousand tokens.
+_NON_ELASTIC = frozenset({"current_work_item"})
+
+#: Spare is handed out in STRICT PRIORITY TIERS, not one proportional pass. Proportional-only
+#: rewards the greediest grower: a project with five thousand events would soak up headroom that
+#: `# Rules` needs for correctness, and rules are the one section with no recovery path at all —
+#: no tool returns them, so a cut there is unrecoverable as well as silent.
+_TIERS = (
+    # We author these and they are identical on every run; their size is a reviewable constant.
+    ("rules",),
+    # Human-authored. Cutting what a person wrote is the expensive failure — it is what deleted a
+    # reviewer's own instruction and a project's constraints before the 2026-07-30 measurement.
+    ("project", "important_context", "review_direction"),
+    # Grow with the project's age. These are what the caps were honestly for, and what this whole
+    # change exists to stop cutting.
+    ("relevant_artifacts", "recent_events", "retrieved_knowledge", "answered_clarifications"),
+)
+
+#: Ceiling as a multiple of the floor, for sections whose demand has no natural bound.
+#: `project` and `important_context` are free-text an operator can paste anything into, so they
+#: keep a real ceiling — generous for genuine steering, bounded against one pathological paste.
+#: The growers are absent on purpose: each is ALREADY bounded by a count cap (20 artifacts,
+#: 15 events, 20 clarifications, at most 24 retrieved chunks), so their demand cannot run away
+#: and their ceiling is simply what they ask for.
+_HARD_MAX_MULTIPLE = {"rules": 2, "project": 4, "important_context": 4, "review_direction": 2}
+
+
+def allocate(total: int | None, floors: dict[str, int],
+             demands: dict[str, int]) -> dict[str, int]:
+    """Per-section allowances for one run. Pure, integer-only, order-independent.
+
+    The invariant that matters, and the one a naive implementation gets wrong:
+
+        allowance[s] >= floor[s]  for every s        and        Σ min(allowance, demand) <= total
+
+    NOT `Σ allowance <= total` — a section that needs 31 tokens keeps its 2,000 floor while
+    reserving only 31, which is the whole reason there is spare to hand out. Asserting the wrong
+    form and then "fixing" it is how a section ends up below its floor, i.e. how this change would
+    make a manifest SMALLER than it is today. That must be impossible, so it is a property test.
+
+    `total=None` means no budget was supplied, and every section gets exactly its floor — the
+    behaviour the platform had before this existed. Every caller outside production omits it, so
+    that path is what the golden byte-equality test pins.
+    """
+    allowances = dict(floors)
+    if total is None:
+        return allowances
+    # Charge a section only what it actually asks for, never its whole floor. Reserving the floor
+    # regardless would make the fallback budget (10,000) smaller than the floors sum (10,950), so
+    # spare would always be zero and an unrecognised model could never improve on today.
+    reserved = sum(min(floors[s], demands.get(s, 0)) for s in floors)
+    spare = total - reserved
+    if spare <= 0:
+        return allowances
+
+    need: dict[str, int] = {}
+    for section in _CANONICAL_ORDER:
+        if section not in floors or section in _NON_ELASTIC:
+            continue
+        multiple = _HARD_MAX_MULTIPLE.get(section)
+        ceiling = floors[section] * multiple if multiple else demands.get(section, 0)
+        wanted = min(demands.get(section, 0), ceiling)
+        if wanted > allowances[section]:
+            need[section] = wanted - allowances[section]
+
+    for tier in _TIERS:
+        active = [s for s in tier if need.get(s, 0) > 0]
+        while active and spare > 0:
+            weight_total = sum(floors[s] for s in active)
+            granted = 0
+            for section in active:
+                share = (spare * floors[section]) // weight_total   # integer only, never float
+                take = min(need[section], share)
+                allowances[section] += take
+                need[section] -= take
+                granted += take
+            spare -= granted
+            if granted == 0:
+                # Only integer-flooring residue is left; hand it out one token at a time in
+                # canonical order so the result stays deterministic, then stop.
+                for section in active:
+                    if spare <= 0:
+                        break
+                    if need[section] > 0:
+                        allowances[section] += 1
+                        need[section] -= 1
+                        spare -= 1
+                break
+            active = [s for s in active if need[s] > 0]
+    return allowances
+
+
+#: How to get back what a cut removed, per section. Only sections with a REAL recovery path get
+#: one. `# Rules` is absent on purpose: no tool returns the rules, which is exactly why their
+#: size is guarded by a test instead. A sentence promising a call that does not exist is worse
+#: than silence - the reviewer's "fetch the PR via the platform tools" cost a whole review that
+#: way, by telling an agent to do something no granted tool could do.
+_RECOVERY = {
+    "project": "_Shortened. Call `get_context()` for the project profile in full._",
+    "important_context": "_Shortened. Call `get_context()` for this steering text in full._",
+    "recent_events": "_Shortened. Call `get_context()` for the full recent-event list._",
+    "answered_clarifications":
+        "_Shortened. Call `get_context()` for every answered clarification._",
+    "retrieved_knowledge":
+        "_Shortened. Call `get_context()` for every retrieved knowledge chunk._",
+}
 
 
 # ── section renderers ───────────────────────────────────────────────
@@ -123,7 +269,8 @@ def _render_project(profile: dict, budget: TokenBudget) -> str:
         value = profile.get(key)
         if value:
             lines.append(_json_block(key, value))
-    return _section("Project", "\n".join(lines), budget.project)
+    return _section("Project", "\n".join(lines), budget.project,
+                    _RECOVERY["project"])
 
 
 def _render_repository(repo: dict, budget: TokenBudget) -> str:
@@ -166,7 +313,8 @@ def _render_repositories(repositories: list, budget: TokenBudget) -> str:
 def _render_important_context(profile: dict, budget: TokenBudget) -> str:
     # Verbatim — this is the operator's hand-written steering text.
     return _section(
-        "Important Context", profile.get("important_context", ""), budget.important_context
+        "Important Context", profile.get("important_context", ""),
+        budget.important_context, _RECOVERY["important_context"],
     )
 
 
@@ -273,7 +421,9 @@ def _render_clarifications(clarifications: list[dict], budget: TokenBudget) -> s
         lines.append("")
     if len(clarifications) > len(shown):
         lines.append(f"… {len(clarifications) - len(shown)} more not shown (budget).")
-    return _section("Answered Clarifications", "\n".join(lines), budget.answered_clarifications)
+    return _section("Answered Clarifications", "\n".join(lines),
+                    budget.answered_clarifications,
+                    _RECOVERY["answered_clarifications"])
 
 
 def _render_round(entry: dict, *, current: bool) -> list[str]:
@@ -406,7 +556,8 @@ def _render_events(events: list[dict], budget: TokenBudget) -> str:
     ]
     if len(events) > len(shown):
         lines.append(f"\n… {len(events) - len(shown)} more not shown (budget).")
-    return _section("Recent Events", "\n".join(lines), budget.recent_events)
+    return _section("Recent Events", "\n".join(lines), budget.recent_events,
+                    _RECOVERY["recent_events"])
 
 
 def _render_knowledge(knowledge: list[dict], budget: TokenBudget) -> str:
@@ -416,7 +567,9 @@ def _render_knowledge(knowledge: list[dict], budget: TokenBudget) -> str:
             budget.retrieved_knowledge,
         )
     lines = [f"- {k.get('text', json.dumps(k, default=str))}" for k in knowledge]
-    return _section("Retrieved Knowledge", "\n".join(lines), budget.retrieved_knowledge)
+    return _section("Retrieved Knowledge", "\n".join(lines),
+                    budget.retrieved_knowledge,
+                    _RECOVERY["retrieved_knowledge"])
 
 
 def _render_rules(rules: str, budget: TokenBudget) -> str:
@@ -433,38 +586,120 @@ def compose_manifest(
     rules: str = "",
     budget: TokenBudget | None = None,
     review_history: list[dict] | None = None,
+    total_budget: int | None = None,
 ) -> str:
     """Render the composed AGENTS.md. `context` is a `get_context()` result.
+
+    `total_budget` is the whole manifest's allowance, derived from the dispatched model's context
+    window (`manifest.budget.total_for_model`). Omit it and every section gets exactly the fixed
+    cap it always had — which is what every caller outside the orchestrator does, and why this
+    parameter could be added without moving a single existing manifest.
 
     `review_history` is the phase's review conversation (see `_render_review_direction`); empty or
     None renders nothing at all, so a manifest for a phase nobody has sent back is byte-identical
     to what it was before this parameter existed."""
+    return compose_manifest_with_report(
+        context=context, work_item=work_item, phase=phase, rules=rules, budget=budget,
+        review_history=review_history, total_budget=total_budget,
+    )[0]
+
+
+def compose_manifest_with_report(
+    *,
+    context: dict,
+    work_item: dict,
+    phase: str,
+    rules: str = "",
+    budget: TokenBudget | None = None,
+    review_history: list[dict] | None = None,
+    total_budget: int | None = None,
+) -> tuple[str, dict[str, dict[str, int]]]:
+    """`compose_manifest`, plus what each section was allowed and what it asked for.
+
+    The report exists because the truncation event used to say only WHICH section was cut. With a
+    fixed cap that was enough; with an allowance that moves, "Retrieved Knowledge was shortened"
+    no longer says whether the section was starved or simply enormous, and that is exactly the
+    difference somebody tuning this needs to see.
+    """
     budget = budget or TokenBudget()
+
+    # Measure, then allocate, then render. The first pass uses a cap nothing can reach, so every
+    # section reports what it would WANT; it is a measurement and is never emitted.
+    #
+    # This is deliberately render-twice rather than splitting all ten renderers into a measuring
+    # half and a truncating half. Reading them settled it: the split would have touched every
+    # renderer — the single likeliest way to move a byte that nobody intended to move — while the
+    # usual objection to rendering twice does not hold here. The one renderer with a loop
+    # (`_render_review_direction`) breaks out of it on the first iteration when the cap is
+    # unreachable, so the measuring pass costs one join, not a quadratic one. And the two
+    # renderers that change LAYOUT when over budget are measured, discarded, and then rendered
+    # again against the real allowance, which is the layout that ships.
+    if total_budget is None:
+        allowances = {}
+    else:
+        measured = _compose_sections(
+            context, work_item, phase, rules, _measuring(budget), review_history)
+        demands: dict[str, int] = {}
+        for key, text in measured:
+            # `project` is claimed by `# Project` AND by `# Repository`/`# Repositories`, which
+            # share one cap today. Take the larger rather than the sum, or the floor is counted
+            # twice and the total is silently shifted by 2,000 tokens.
+            demands[key] = max(demands.get(key, 0), estimate_tokens(text))
+        floors = {k: getattr(budget, k) for k in _CANONICAL_ORDER if k in demands}
+        allowances = allocate(total_budget, floors, demands)
+        budget = replace(budget, **allowances)
+
+    sections = _compose_sections(context, work_item, phase, rules, budget, review_history)
+    manifest = "\n\n".join(text for _, text in sections).strip() + "\n"
+    report = {
+        key: {"allowance": getattr(budget, key), "demand": estimate_tokens(text)}
+        for key, text in sections
+    }
+    return manifest, report
+
+
+def _measuring(budget: TokenBudget) -> TokenBudget:
+    """The same budget with every TOKEN cap raised out of reach, COUNT caps untouched.
+
+    The counts (20 artifacts, 15 events, 20 clarifications) are not elastic and must bound the
+    measurement too — otherwise a project with a thousand artifacts would report a demand for a
+    section that is never going to render a thousand artifacts.
+    """
+    return replace(budget, **{k: _MEASURING_CAP for k in _CANONICAL_ORDER})
+
+
+def _compose_sections(
+    context: dict, work_item: dict, phase: str, rules: str,
+    budget: TokenBudget, review_history: list[dict] | None,
+) -> list[tuple[str, str]]:
+    """`(budget key, rendered section)` in the locked order. The single place that decides which
+    optional sections are present, so the measuring pass and the real pass can never disagree."""
     profile = context.get("profile") or {}
     repo = context.get("repo")
     repositories = context.get("repositories") or []
-    sections = [_render_project(profile, budget)]
+    sections: list[tuple[str, str]] = [("project", _render_project(profile, budget))]
     if repo:  # only for a repo-scoped (multi-repo) run — single-repo manifests omit it
-        sections.append(_render_repository(repo, budget))
+        sections.append(("project", _render_repository(repo, budget)))
     elif len(repositories) > 1:
         # project-level run (no single repo) on a multi-repo project — list the assignment
         # options so Task Breakdown can route each work item to the right repo (Option C).
-        sections.append(_render_repositories(repositories, budget))
-    sections.append(_render_important_context(profile, budget))
+        sections.append(("project", _render_repositories(repositories, budget)))
+    sections.append(("important_context", _render_important_context(profile, budget)))
     direction = _render_review_direction(review_history or [], budget)
     if direction:  # only when a reviewer sent this phase back with written direction
-        sections.append(direction)
-    sections.append(_render_work_item(work_item, phase, budget))
+        sections.append(("review_direction", direction))
+    sections.append(("current_work_item", _render_work_item(work_item, phase, budget)))
     clarifications = context.get("answered_clarifications") or []
     if clarifications:  # only when prior answers exist (req #2 durability) — else omitted
-        sections.append(_render_clarifications(clarifications, budget))
+        sections.append(("answered_clarifications", _render_clarifications(clarifications, budget)))
     sections += [
-        _render_artifacts(
+        ("relevant_artifacts", _render_artifacts(
             context.get("relevant_artifacts") or [], budget,
             missing_required=context.get("missing_required_artifacts") or [],
-        ),
-        _render_events(context.get("recent_events") or [], budget),
-        _render_knowledge(context.get("retrieved_knowledge") or [], budget),
-        _render_rules(rules, budget),
+        )),
+        ("recent_events", _render_events(context.get("recent_events") or [], budget)),
+        ("retrieved_knowledge",
+         _render_knowledge(context.get("retrieved_knowledge") or [], budget)),
+        ("rules", _render_rules(rules, budget)),
     ]
-    return "\n\n".join(sections).strip() + "\n"
+    return sections

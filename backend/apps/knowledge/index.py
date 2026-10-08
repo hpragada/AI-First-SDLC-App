@@ -137,6 +137,10 @@ def retrieve(tenant_id, *, project_id, query, repo=None, k=8, provider=None) -> 
 
     top = sorted(chunks, key=lambda c: fused.get(c.id, 0.0), reverse=True)
     top = [c for c in top if fused.get(c.id, 0.0) > 0][:k]
+    # `token_count` has been stored at index time since this module was written and was dropped
+    # on the way out, so the composer had to re-estimate a size the database already knew. It is
+    # carried now because the manifest budget sizes this section from it (truncation register T3).
     return [{"text": c.text, "artifact_id": str(c.artifact_id) if c.artifact_id else None,
              "repo_id": str(c.repo_id) if c.repo_id else None,
-             "source": c.source, "score": round(fused[c.id], 6)} for c in top]
+             "source": c.source, "score": round(fused[c.id], 6),
+             "token_count": c.token_count} for c in top]

@@ -363,3 +363,30 @@ def test_an_unknown_action_still_shows_something():
     console read as "this run has nothing to show" (Bugs.xlsx row 21 iv)."""
     assert _said("some.retired_action", {}) == "Some retired action"
     assert _said("", {}) == "Event"
+
+
+def test_the_budget_events_read_as_sentences_and_never_name_the_engine():
+    """Three lines added with the manifest budget work, all three readable by a client.
+
+    `artifacts.publish_failed` is the one worth remembering: it was added with the publish-loop
+    fix and never given a sentence, so it would have reached the run console as "Artifacts publish
+    failed" — the internal name, on a client's screen. The scan above is what caught it, which is
+    the whole reason that guard exists.
+
+    The engine's model id stays OUT of the visible line. It is in the payload for anyone querying
+    events, which is where a machine name belongs; on screen it answers a question the reader did
+    not ask and cannot act on.
+    """
+    assert _said("artifacts.publish_failed", {"count": 1, "artifacts": ["a1"]}) == (
+        "Some documents could not be published to your tools — 1 document affected")
+    assert _said("artifacts.publish_failed", {"count": 4, "artifacts": []}) == (
+        "Some documents could not be published to your tools — 4 documents affected")
+    assert _said("artifacts.publish_failed", {}) == (
+        "Some documents could not be published to your tools")
+
+    line = _said("manifest.model_unknown",
+                 {"model": "claude-sonnet-4-6", "assumed_budget": 10_000})
+    assert line == "The briefing was sized for an unfamiliar engine — 10,000 words of room assumed"
+    assert "claude" not in line
+    assert _said("manifest.model_unknown", {}) == (
+        "The briefing was sized for an unfamiliar engine")

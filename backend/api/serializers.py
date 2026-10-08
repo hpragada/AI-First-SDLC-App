@@ -698,6 +698,27 @@ def _waited_tail(payload: dict) -> str:
     return f"after {minutes} minute" + ("s" if minutes != 1 else "")
 
 
+def _publish_failed_tail(payload: dict) -> str:
+    """"2 documents affected." — the count, never the internal ids the payload also carries."""
+    count = payload.get("count")
+    if not isinstance(count, int) or count <= 0:
+        return ""
+    return "1 document affected" if count == 1 else f"{count} documents affected"
+
+
+def _assumed_budget_tail(payload: dict) -> str:
+    """"10,000 words of room assumed." — never the raw model id.
+
+    The model name is in the payload for whoever queries the events, and it belongs there. It does
+    not belong on a client's screen: `claude-sonnet-4-6` is a machine name that answers a question
+    the reader did not ask, and the standing rule is that engine internals stay off these lines.
+    """
+    budget = payload.get("assumed_budget")
+    if not isinstance(budget, int) or budget <= 0:
+        return ""
+    return f"{budget:,} words of room assumed"
+
+
 def _sections_tail(payload: dict) -> str:
     sections = payload.get("sections")
     if not isinstance(sections, list) or not sections:
@@ -759,6 +780,11 @@ EVENT_SENTENCES: dict[str, EventWords] = {
     # title ("prd — PRD — Spend Export"), and the type is a stored key.
     "artifact.registered": EventWords("Draft saved", "title"),
     "artifacts.published": EventWords("Published to your tools"),
+    # Added with the publish loop in `a0082fd` and left without a sentence, so it would have
+    # reached the console as "Artifacts publish failed" — the internal name, on a client's screen.
+    # The companion guard (`test_every_event_a_run_owns_has_a_sentence`) is exactly what caught it.
+    "artifacts.publish_failed": EventWords(
+        "Some documents could not be published to your tools", _publish_failed_tail),
     "build.pr_opened": EventWords("Pull request opened"),
     "build.merged": EventWords("Merged"),
     "build.reviewed": EventWords("Code review finished", _findings_tail),
@@ -823,6 +849,12 @@ EVENT_SENTENCES: dict[str, EventWords] = {
     # ── Housekeeping ───────────────────────────────────────────────
     "manifest.truncated": EventWords(
         "The agent's briefing was shortened to fit", _sections_tail),
+    # The engine model carried no known context window, so the briefing was sized to the platform's
+    # long-standing assumption. Worth a line on the console: nothing is wrong with the run, but the
+    # agent is working from a smaller briefing than its model could have held, and the cure is one
+    # row in the model table rather than anything the reader can do.
+    "manifest.model_unknown": EventWords(
+        "The briefing was sized for an unfamiliar engine", _assumed_budget_tail),
     "run.reconciled": EventWords("Put back in step with your machine"),
     "run.worker_recovered": EventWords("Your machine started reporting again"),
 }

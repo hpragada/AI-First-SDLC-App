@@ -378,3 +378,30 @@ def test_the_metadata_lines_still_obey_the_cap():
     assert TRUNCATION_MARKER in section, "runaway metadata must still be capped"
     assert "- description: short" in section, "the description must survive the metadata cut"
     assert estimate_tokens(section) <= TokenBudget().current_work_item + 100
+
+
+def test_the_rules_we_author_fit_their_budget_with_room_to_spare():
+    """`# Rules` is the ONE section with no recovery path at all (truncation register T10).
+
+    Every other section can be re-fetched: `get_context` returns the profile and the events,
+    `get_artifact_body` returns a document, `list_artifacts` finds one by type. **No tool returns
+    the rules.** So if they ever cross their budget they are cut on every run of every phase, the
+    agent loses the tail of its standing instructions, and nothing anywhere can get it back.
+
+    Nothing guarded this. `test_composer_renders_distilled_rules_in_rules_section` looks for
+    "Zero hallucination" and "Tier 1", both near the top, so it passes happily with the whole end
+    of the rules missing. The file is append-only in practice — every new rule is added to the
+    bottom, which is precisely the part a cut removes.
+
+    The margin is deliberate: failing only at 100% would mean the rule that crosses the line is
+    also the rule nobody can see was lost.
+    """
+    from manifest.rules import get_prompt_rules
+
+    used = estimate_tokens(get_prompt_rules())
+    cap = TokenBudget().rules
+    assert used < cap * 0.9, (
+        f"the authored rules are {used} tokens against a {cap} budget. Raise "
+        f"`TokenBudget.rules` or shorten the rules — do NOT let this test pass by accident: "
+        f"nothing can re-fetch what gets cut here."
+    )

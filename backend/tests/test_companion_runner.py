@@ -959,9 +959,12 @@ def _exposed_tool_names() -> set:
 
 
 def test_every_granted_tool_is_actually_exposed_by_the_mcp_server():
-    from runner.companion.runner import BUILD_STATE_TOOLS
+    from runner.companion.runner import BUILD_STATE_TOOLS, REVIEW_ONLY_STATE_TOOLS
 
-    granted = set(BUILD_STATE_TOOLS) - {"ask_human"}   # ask_human is wired via clarify_client
+    # The review-only extras are checked by the SAME rule as the shared base. Granting a tool to
+    # one agent and forgetting to expose it is the identical failure as forgetting it for all of
+    # them — the allowlist says yes and the agent still cannot call it.
+    granted = (set(BUILD_STATE_TOOLS) | set(REVIEW_ONLY_STATE_TOOLS)) - {"ask_human"}
     missing = sorted(granted - _exposed_tool_names())
     assert not missing, (
         f"granted in BUILD_STATE_TOOLS but never defined in state_mcp.py: {missing}. "

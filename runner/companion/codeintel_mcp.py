@@ -53,7 +53,11 @@ def build_server(*, workspace: str, repo: str) -> FastMCP:
         can be entirely missing while the file count looks perfectly healthy. If
         `index_health.git.ok` is false, commit counts, hotspots, ownership and bus-factor are
         ALL unavailable — not zero — and must be reported as unavailable. If `skipped_files` is
-        non-empty, those file types were not analysed at all; record them as assumptions."""
+        non-empty, those file types were not analysed at all; record them as assumptions.
+        `partially_indexed_files` and `unsearchable_files` name individual files whose CONTENT
+        search can see only the beginning of, or nothing of. A search that misses a term in one
+        of those files is NOT evidence the codebase lacks it — record those as assumptions too,
+        or you will report a capability missing when it is merely unreadable."""
         idx = engine.index(workspace=ws_bound, repo=repo or repo_bound)
         return {
             "repo": idx.repo, "indexed_at": idx.indexed_at, "file_count": idx.file_count,
@@ -66,7 +70,9 @@ def build_server(*, workspace: str, repo: str) -> FastMCP:
         """Health of the INDEX itself, not of the codebase: whether git could be read
         (`git.ok`, `git.partial`, `git.error`), which file types were skipped
         (`skipped_files`), how many files were analysed, and whether content search covers the
-        whole repo. Use it to state plainly what you could NOT see."""
+        whole repo — with `partially_indexed_files` and `unsearchable_files` naming the
+        individual files it can see only part of, or none of. Use it to state plainly what you
+        could NOT see, by name rather than as a count."""
         return engine.index_report(repo=repo or repo_bound)
 
     @server.tool()

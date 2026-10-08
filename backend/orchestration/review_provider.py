@@ -25,9 +25,10 @@ from apps.registry.models import AgentSpec
 from apps.runs.models import Run
 from apps.tenancy.context import tenant_context
 from apps.workitems.models import WorkItem
+from manifest.budget import MIN_PR_FILE_CHARS, pr_file_chars, total_for_model
 
 from .activities import (
-    PLATFORM_TOOLS,
+    REVIEW_TOOLS,
     _load_agent_body,
     _mcp_servers,
     compose_manifest_core,
@@ -42,8 +43,17 @@ if TYPE_CHECKING:
 
 _REVIEW_AGENT_KEY = "08_code_review"
 _REVIEW_PHASE = "code_review"
-# How much of each changed file to ship to the reviewer (keep the prompt bounded).
-_MAX_FILE_CHARS = 16000
+
+
+def _review_budget(spec) -> int:
+    """The reviewer's manifest budget, from the 08 spec the caller already loaded.
+
+    Taken from the spec rather than re-queried: both providers fetch it before composing, and the
+    model that will read this briefing is the reviewer's, not the build agent's that produced the
+    PR. No row, no model, no guess - the fallback is the size the platform always used.
+    """
+    total, _ = total_for_model(getattr(spec, "recommended_model", "") or "")
+    return total
 
 # critical/warning are blocking (become remediation child WorkItems); suggestion is not.
 _SEVERITY_ALIASES = {
@@ -321,12 +331,12 @@ class AgentReviewProvider:
             # 08 not seeded for this tenant → no findings (the loop falls through to the gate).
             return []
 
-        manifest = self._build_review_manifest(inp, pr_ref)
+        manifest = self._build_review_manifest(inp, pr_ref, spec=spec)
         driver = self._driver_factory()
         result = asyncio.run(driver.run_review_task(
             manifest=manifest, agent_spec=spec,
             mcp_servers=_mcp_servers(inp.tenant_id, inp.project_id, inp.run_id),
-            allowed_tools=PLATFORM_TOOLS, work_item=work_item,
+            allowed_tools=REVIEW_TOOLS, work_item=work_item,
         ))
         body = result.outputs.get("result") or result.outputs.get("text") or ""
         return parse_and_guard(
@@ -335,21 +345,37 @@ class AgentReviewProvider:
         )
 
     # ── manifest assembly ───────────────────────────────────────────
-    def _build_review_manifest(self, inp: BuildInput, pr_ref: str) -> str:
+    def _build_review_manifest(self, inp: BuildInput, pr_ref: str, *, spec=None) -> str:
+        """The reviewer's briefing: the composed manifest, then the PR, then anything still open.
+
+        `spec` is the 08 AgentSpec the caller has ALREADY loaded. It matters because the manifest
+        is composed from `agent_spec_id`, and this method used to pass `inp.agent_spec_id` — the
+        BUILD agent's spec (07) — while the run it feeds executes as 08. Harmless while nothing
+        read the spec, but the manifest budget is now derived from the spec's model, so composing
+        with 07's id would size the reviewer's briefing from the wrong agent's model. Both
+        providers hold the right spec before they call this; they just never passed it.
+        """
         review_inp = AgentRunInput(
             run_id=inp.run_id, tenant_id=inp.tenant_id, project_id=inp.project_id,
-            work_item_id=inp.work_item_id, agent_spec_id=inp.agent_spec_id, phase=_REVIEW_PHASE,
+            work_item_id=inp.work_item_id,
+            agent_spec_id=str(spec.id) if spec is not None else inp.agent_spec_id,
+            phase=_REVIEW_PHASE,
         )
         base = self._compose_manifest(review_inp)
-        parts = [base, self._render_pr_section(inp, pr_ref)]
+        parts = [base, self._render_pr_section(
+            inp, pr_ref, max_file_chars=pr_file_chars(_review_budget(spec)))]
         open_section = _render_open_findings(inp)
         if open_section:
             parts.append(open_section)
         return "\n\n".join(parts)
 
-    def _render_pr_section(self, inp: BuildInput, pr_ref: str) -> str:
+    def _render_pr_section(self, inp: BuildInput, pr_ref: str, *,
+                           max_file_chars: int = MIN_PR_FILE_CHARS) -> str:
         """Read the PR's changed files **through** the CodeHost capability (never copied as a
-        source of truth) and inline them so the reviewer reasons over the actual diff."""
+        source of truth) and inline them so the reviewer reasons over the actual diff.
+
+        `max_file_chars` comes from this run's manifest budget and is never below what was
+        inlined before, so a review can only ever see more of a file than it used to."""
         lines = ["# Pull Request Under Review", f"Ref: {pr_ref}", ""]
         try:
             codehost = self._get_capability(inp.tenant_id, "codehost")
@@ -371,11 +397,25 @@ class AgentReviewProvider:
                 if contains_nul(content):
                     lines += [f"## {path}", "(binary file — omitted from review)", ""]
                     continue
-                if len(content) > _MAX_FILE_CHARS:
-                    content = content[:_MAX_FILE_CHARS] + "\n… (truncated)"
+                if len(content) > max_file_chars:
+                    # Name the offset and the call that returns the rest. A bare
+                    # "(truncated)" told the agent something was missing and gave it no way
+                    # to act, so the tail of a long file went unreviewed while the review
+                    # still reported as a completed review.
+                    content = (
+                        content[:max_file_chars]
+                        + f"\n… (truncated at {max_file_chars:,} of "
+                          f"{len(content):,} chars — call "
+                          f'get_pr_file(path=\"{path}\", start={max_file_chars}) for the rest)'
+                    )
                 lines += [f"## {path}", "```", content, "```", ""]
         except Exception:  # noqa: BLE001 — degrade to ref-only; the reviewer can fetch via tools
-            lines.append("(diff unavailable — fetch the PR via the platform tools)")
+            # Now a true instruction. Until `get_pr_file` existed, no tool in any grant
+            # list could read a file from a repository, so this line asked the reviewer
+            # for something it could not do and the review proceeded on nothing.
+            lines.append(
+                "(diff unavailable — read each changed file with "
+                f'get_pr_file(pr_ref=\"{pr_ref}\", path=\"<path>\"))')
         return "\n".join(lines)
 
 
@@ -559,7 +599,7 @@ class CompanionReviewProvider:
                 id=inp.work_item_id, tenant_id=inp.tenant_id).first()
         if spec is None:
             return []  # 08 not seeded → no findings (loop falls through to the merge gate)
-        manifest = self._manifest._build_review_manifest(inp, pr_ref)
+        manifest = self._manifest._build_review_manifest(inp, pr_ref, spec=spec)
         agent_body, model = _load_agent_body(str(spec.id), inp.tenant_id)
         self._dispatch(inp, manifest=manifest, agent_body=agent_body, model=model)
         timeout = float(getattr(inp, "review_timeout_seconds", None) or self._timeout)
