@@ -1713,6 +1713,15 @@ class UserViewSet(TenantScopedMixin, viewsets.GenericViewSet):
 
 
 # ── Invitations (admin — P4.7-T3) ───────────────────────────────────
+def _email_outcome(invitation) -> dict:
+    from django.conf import settings as dj_settings
+
+    return {
+        "email_sent": bool(getattr(invitation, "email_sent", False)),
+        "email_delivery": "console" if "console" in dj_settings.EMAIL_BACKEND else "email",
+    }
+
+
 class InvitationViewSet(
     TenantScopedMixin,
     mixins.CreateModelMixin,
@@ -1740,8 +1749,11 @@ class InvitationViewSet(
             )
         except InvitationError as exc:
             raise ValidationError({"email": str(exc)}) from exc
+        # 2026-10-09: tell the admin whether the email actually went (SendGrid), or that this
+        # copy of the app has no mail service and printed the link to the server terminal.
         return Response(
-            InvitationSerializer(invitation).data, status=status.HTTP_201_CREATED
+            {**InvitationSerializer(invitation).data, **_email_outcome(invitation)},
+            status=status.HTTP_201_CREATED,
         )
 
     @action(detail=True, methods=["post"])
@@ -1751,7 +1763,7 @@ class InvitationViewSet(
             resend_invitation(invitation)
         except InvitationError as exc:
             raise ValidationError(str(exc)) from exc
-        return Response(InvitationSerializer(invitation).data)
+        return Response({**InvitationSerializer(invitation).data, **_email_outcome(invitation)})
 
     @action(detail=True, methods=["post"])
     def revoke(self, request, pk=None):

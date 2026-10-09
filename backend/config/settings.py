@@ -208,7 +208,23 @@ CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=list(CORS_ALLOWE
 # The pluggable seam is EMAIL_BACKEND: console in dev (links print to the log — no real
 # mail dependency), a real SMTP/API backend in prod. FRONTEND_BASE_URL builds the accept /
 # reset links the SPA handles.
-EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+# 2026-10-09 (Bugs 192): SendGrid, over Django's own SMTP backend (no new dependency). Set
+# SENDGRID_API_KEY in .env and mail goes out; leave it empty and every local copy keeps printing
+# the link to the server terminal as before. An explicit EMAIL_BACKEND still wins.
+SENDGRID_API_KEY = env("SENDGRID_API_KEY", default="")
+EMAIL_BACKEND = env(
+    "EMAIL_BACKEND",
+    default=(
+        "django.core.mail.backends.smtp.EmailBackend" if SENDGRID_API_KEY
+        else "django.core.mail.backends.console.EmailBackend"
+    ),
+)
+EMAIL_HOST = env("EMAIL_HOST", default="smtp.sendgrid.net")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="apikey")  # SendGrid's fixed SMTP user name
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default=SENDGRID_API_KEY)
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=10)
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="no-reply@sdlc.local")
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:5173")
 

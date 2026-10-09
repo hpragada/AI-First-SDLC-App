@@ -33,7 +33,8 @@ const me = {
 /** Reads succeed, every WRITE fails — the state a person is actually in when a button appears
  *  to do nothing. `body` is the server's own answer, which is what must reach the screen. */
 function stubWriteFailure(
-  { reads = {} as Record<string, unknown>, status = 403, body = {} as unknown } = {},
+  { reads = {} as Record<string, unknown>, status = 403, body = {} as unknown,
+    signedOut = false } = {},
 ) {
   vi.stubGlobal(
     "fetch",
@@ -43,7 +44,8 @@ function stubWriteFailure(
       const res = (s: number, b: unknown) =>
         ({ ok: s < 400, status: s, statusText: "stub",
            text: async () => JSON.stringify(b) }) as Response;
-      if (u.includes("/auth/me")) return res(200, me);
+      // A password reset is done signed OUT; signed in, the page now asks you to sign out first.
+      if (u.includes("/auth/me")) return signedOut ? res(401, { detail: "no session" }) : res(200, me);
       if (method !== "GET") return res(status, body);
       for (const [needle, value] of Object.entries(reads)) {
         if (u.includes(needle)) return res(200, value);
@@ -201,7 +203,9 @@ describe("accepting an invitation", () => {
     const user = userEvent.setup();
     renderWithProviders(<AcceptInvite />, { route: "/accept?token=abc" });
 
-    await user.type(await screen.findByPlaceholderText("At least 8 characters"), "password123");
+    // A name is required now (2026-10-09), so it is filled in like a person would.
+    await user.type(await screen.findByPlaceholderText("e.g. Jordan Lee"), "Jo");
+    await user.type(screen.getByPlaceholderText("At least 8 characters"), "password123");
     await user.click(screen.getByRole("button", { name: /Join workspace/ }));
 
     await waitFor(() => expect(screen.getByText(/too common/)).toBeDefined());
@@ -210,7 +214,8 @@ describe("accepting an invitation", () => {
 
 describe("setting a new password", () => {
   it("shows a rejected password", async () => {
-    stubWriteFailure({ status: 400, body: { password: ["This password is entirely numeric."] } });
+    stubWriteFailure({ status: 400, body: { password: ["This password is entirely numeric."] },
+                       signedOut: true });
     const user = userEvent.setup();
     renderWithProviders(<ResetPassword />, { route: "/reset?token=abc" });
 
@@ -232,8 +237,13 @@ describe("setting a new password", () => {
       vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
         const u = String(url);
         if ((init?.method ?? "GET").toUpperCase() !== "GET") writes.push(u);
+        // Signed out, as a person resetting a password is.
+        if (u.includes("/auth/me")) {
+          return { ok: false, status: 401, statusText: "stub",
+                   text: async () => JSON.stringify({ detail: "no session" }) } as Response;
+        }
         return { ok: true, status: 200, statusText: "stub",
-                 text: async () => JSON.stringify(u.includes("/auth/me") ? me : {}) } as Response;
+                 text: async () => JSON.stringify({}) } as Response;
       }),
     );
     const user = userEvent.setup();

@@ -997,3 +997,29 @@ added by the pack audit continue at **TC-261**, which collides with nothing.
   the plan's known inert controls list. It now opens the existing `Needs me` queue rather than a
   separate notifications panel — do not raise the absence of a notifications drop-down.
 - The bell's screen-reader name is `Notifications, {n} unread`.
+
+---
+
+### TC-953 · The dashboard greeting follows the clock
+
+| Field | Value |
+|---|---|
+| Suite | TS-12 Shell & Dashboard |
+| Type | UX |
+| Priority | Low |
+| Screen | `/` |
+| Persona | Any |
+| Automation | Yes |
+
+**Why this case exists.** It said `Good morning` at every hour. Bugs S.No 367.
+
+**Steps**
+1. Open the dashboard at any time of day.
+
+**Expected**
+- Before 12:00 `Good morning`, until 17:00 `Good afternoon`, after that `Good evening` — by your own
+  computer's clock. With something waiting on you, the same greeting is followed by
+  `— here's what needs you`.
+
+**Pass / Fail**
+- FAIL if the greeting does not match the time of day.

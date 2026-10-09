@@ -9,10 +9,11 @@ no phase runs are needed — every case here finishes in minutes.
 TS-02 and TS-03) logs into. TC-021 creates the P10 Engineer account that TS-02's permission cases
 and TS-03's repository permission case depend on.
 
-**Getting one-time links.** The dev stack uses Django's console email backend, so invitation and
-password-reset emails are printed to the backend log rather than delivered. Where a case needs a
-link, read it from `docker compose logs backend` and paste it into the browser. That is a *step*,
-not an oracle — every Expected Result below is still something you see in the browser.
+**Getting one-time links.** Invitation and password-reset emails go out through SendGrid when
+`SENDGRID_API_KEY` is set in `.env` (from 2026-10-09). Without a key, the app prints them to the
+backend log instead: read the link from `docker compose logs backend` and paste it into the browser.
+Either way that is a *step*, not an oracle — every Expected Result below is still something you see
+in the browser. Use addresses you own when SendGrid is on; the email really is sent.
 
 ---
 
@@ -252,19 +253,19 @@ not an oracle — every Expected Result below is still something you see in the 
 4. Extend it to `QaTest-2026!`.
 
 **Expected**
-- Before you type, the strength meter under the Password field is at its lowest — no bars filled.
-- With `abc` the meter is **still at its lowest** — visually identical to the empty field.
-- With `abcdefgh` exactly one bar is filled.
-- With `QaTest-2026!` the meter is full (all bars filled).
+- Before you type, the strength meter under the Password field is at its lowest — no bars filled,
+  and no help line.
+- With `abc` the meter is **still at its lowest**, and the help line reads
+  `Too short. Use at least 8 characters.`
+- With `abcdefgh` exactly one bar is filled and the help line reads `Weak`.
+- With `QaTest-2026!` the meter is full (all bars filled) and the help line reads `Strong`.
 - The meter never goes backwards as you extend the password.
-- Once any character is typed, the help line under the field reads
-  `Strong — add a symbol to max it out.`
 
 **Pass / Fail**
 - PASS if the meter is at its lowest for both empty and `abc`, one bar at `abcdefgh`, full at
-  `QaTest-2026!`, and never decreases.
-- FAIL if the meter never changes between `abcdefgh` and `QaTest-2026!`, goes backwards, or is
-  missing entirely.
+  `QaTest-2026!`, never decreases, and the help line says `Too short…`, `Weak`, then `Strong`.
+- FAIL if the help line calls a password strong that the meter shows as weak or too short — the
+  old copy said `Strong — add a symbol to max it out.` for anything typed (Bugs S.No 361).
 
 **Test data**
 - `abc` (scores 0) · `abcdefgh` (scores 1) · `QaTest-2026!` (scores 4)
@@ -272,10 +273,9 @@ not an oracle — every Expected Result below is still something you see in the 
 **Notes**
 - **`abc` scoring zero is correct, not a bug.** The meter scores four things only: length ≥ 8,
   length ≥ 12, mixed upper/lower case, a digit, a symbol. A short all-lowercase password earns
-  none of them, so it is indistinguishable from an empty field. Do not raise that.
-- The help line is static copy — it says `Strong…` for *any* non-empty password, including `abc`,
-  which is a direct contradiction of the meter showing zero. That mismatch is a known copy defect;
-  note it against this case rather than raising a second one.
+  none of them.
+- The same help line now appears on the invite form (`/accept-invite`) and the reset form
+  (`/reset?token=…`); TC-502 and TC-504 cover those.
 
 ---
 
@@ -780,22 +780,23 @@ not an oracle — every Expected Result below is still something you see in the 
 - After step 3 the card shows the heading `This reset link is invalid` with the body
   `It may have expired or already been used. Request a fresh link to continue.`
 - No password is changed anywhere.
-- After step 4 nothing happens — the screen does not navigate and no new link is sent.
+- After step 4 the `Forgot your password?` form opens with an **empty** Work email box.
 
 **Pass / Fail**
-- PASS if the invalid state renders with that exact copy.
-- FAIL if the app errors, shows a raw 410, or claims the password was updated.
+- PASS if the invalid state renders with that exact copy and step 4 opens the request form.
+- FAIL if the app errors, shows a raw 410, claims the password was updated, or step 4 stays on the
+  invalid card (Bugs S.No 363).
 
 **Test data**
 - Token: `not-a-real-token`
 
 **Notes**
-- **`Request a new link` is a known inert control** — it has no click handler. It is on the plan's
-  known-inert list (§10). Confirm it does nothing and do **not** raise a new defect.
+- `Request a new link` was an inert control, then briefly a link that reopened the same invalid
+  card. Both were fixed on 2026-10-09 — a dead or looping button here is now a defect.
 
 ---
 
-### TC-020 · The reset form is prefilled with a hardcoded sample address
+### TC-020 · The reset pages never show a made-up address
 
 | Field | Value |
 |---|---|
@@ -818,28 +819,21 @@ not an oracle — every Expected Result below is still something you see in the 
    `Set a new password` without typing anything.
 
 **Expected**
-- The Work email field should be **empty** on first load — it must not contain an unrelated third
-  party's address.
-- The `Set a new password` sub-line should name the account the link belongs to, not a sample.
+- The Work email field is **empty** on first load, with the grey hint `you@company.com`.
+- The `Set a new password` sub-line reads `Choose a strong password for your account.`
 
 **Pass / Fail**
-- **Expect this case to fail today.** The current build ships leftover design-mock data on a live
-  screen.
-- PASS only if the field is empty on first load and the sub-line names a real address.
-- FAIL if the field contains `sarah@acme.com`, or the sub-line reads
-  `Choose a strong password for sarah@acme.com`.
+- PASS if the field is empty on first load and no sample address appears anywhere.
+- FAIL if `sarah@acme.com` appears in the field, on the `Check your email` card, or in the sub-line
+  (Bugs S.No 362).
 
 **Test data**
-- Prefilled value: `sarah@acme.com`
+- None — read the screen as it loads.
 
 **Notes**
-- **Record what you actually see at each step** — that is the evidence for the defect:
-  step 2 the field reads `sarah@acme.com`; step 3 the confirmation card reads `Check your email`
-  naming `sarah@acme.com`; step 4 the sub-line reads `Choose a strong password for sarah@acme.com`.
-- Raise this **once**, Medium severity, against this case, covering all three symptoms in one row —
-  a user who does not notice the prefill sends a reset request for a stranger's address and is then
-  shown that stranger's email. Do not open a second defect for the sub-line.
-- Do not raise it again from TC-017 or TC-018, which both walk past the same prefill.
+- This case used to be expected to fail: the screen shipped the design mock's `sarah@acme.com`.
+  Fixed 2026-10-09. Step 3 (submitting the empty field) is refused by the browser's own
+  "fill in this field" prompt — that is fine.
 
 ---
 
@@ -850,7 +844,7 @@ not an oracle — every Expected Result below is still something you see in the 
 | Suite | TS-01 Identity & Access |
 | Type | E2E |
 | Priority | Critical |
-| Screen | `/accept-invite?token=…` → `/` |
+| Screen | `/accept-invite?token=…` → `/setup` |
 | Persona | P10 Engineer |
 | Automation | No |
 
@@ -869,15 +863,20 @@ not an oracle — every Expected Result below is still something you see in the 
 5. Click **Join workspace**.
 
 **Expected**
-- The heading is `Join QA Alpha` (your workspace name, not `Acme Corp`).
+- The heading is `Join QA Alpha` (your workspace name, not `Acme Corp`), and the sub-line reads
+  `You've been invited by {admin} as Engineer on Payment Gateway v2.` — every granted role is named.
 - The `Email` field shows `qa+a.eng@edvensoft.com` and is **disabled** — it cannot be edited.
-- After step 5 the browser lands on `/` and the dashboard renders as the newly-joined user; the
-  avatar menu shows `qa+a.eng@edvensoft.com`.
+- After step 5 the browser lands on **`/setup`**, titled `Welcome to Payment Gateway v2`, reading
+  `You've joined as Engineer. One step left.`, with only two steps: `Join the workspace` (Done) and
+  `Connect your machine`, and the line `Inviting people and integrations are set up by your
+  workspace admin.` The avatar menu shows `qa+a.eng@edvensoft.com`.
 
 **Pass / Fail**
-- PASS if the account is created, the email field was locked, and the user lands signed in on `/`.
+- PASS if the account is created, the email field was locked, and the user lands signed in on the
+  teammate's own Get started page.
 - FAIL if the heading shows placeholder copy (`Join Acme Corp` / `Sarah Chen` / `raj@acme.com`), the
-  email is editable, or joining errors.
+  email is editable, joining errors, or the new teammate is shown the owner's four steps (`Invite
+  your team`, `Connect integrations`).
 
 **Test data**
 - `qa+a.eng@edvensoft.com` / `QaTest-2026!` — this becomes **P10 Engineer** for the rest of the pack.
@@ -889,7 +888,7 @@ not an oracle — every Expected Result below is still something you see in the 
 
 ---
 
-### TC-022 · An expired or already-used invite link shows the expired state
+### TC-022 · A link that can't be used says why, in its own words
 
 | Field | Value |
 |---|---|
@@ -907,26 +906,32 @@ not an oracle — every Expected Result below is still something you see in the 
 **Steps**
 1. Re-open the invite link consumed in TC-021.
 2. Read the card.
-3. Click **Request a new invite**.
-4. Now open `http://localhost:5173/accept-invite` with no `token` at all.
+3. Open `http://localhost:5173/accept-invite` with no `token` at all.
+4. Open an invite link whose invitation was revoked (TS-02 TC-027) and read the card.
 
 **Expected**
-- Steps 1–2 show the heading `This invite link has expired` with the body
-  `Invitation links are valid for 7 days, or expire once used. Ask your admin to resend it.`
-- Step 3 does nothing — no navigation, no confirmation, no new invitation.
-- Step 4 shows the same expired card rather than an empty or broken form.
+- Steps 1–2: heading `You've already joined`, body `This invite was used. Sign in instead.`, and a
+  **Sign in** button that opens `/login`.
+- Step 3: heading `This link doesn't work any more`, body `A newer invite may have replaced it. Open
+  the most recent invite email, or ask your workspace admin.`
+- Step 4: heading `This invite was cancelled`, body `Ask {admin's name} if you still need access.`
+- On every one of these, the left panel reads `You're Invited to Edvensoft SDLC App`.
+- No form is shown and no **Request a new invite** button appears.
 
 **Pass / Fail**
-- PASS if a used token and a missing token both land on the expired card with that exact copy.
-- FAIL if the form renders and a second account can be created from a used link.
+- PASS if each case shows its own heading and body, with that exact copy.
+- FAIL if any of them says `This invite link has expired` (the old one-size-fits-all card), a form
+  renders, or a second account can be created from a used link (Bugs S.No 357).
 
 **Test data**
-- The consumed token from TC-021 · and a bare `/accept-invite` URL
+- The consumed token from TC-021 · a bare `/accept-invite` URL · the revoked link from TC-027
 
 **Notes**
-- **`Request a new invite` is a known inert control** — no click handler, listed in the plan's
-  known-inert list (§10). Confirm and move on; do not raise a new defect.
-- Invitations are single-use and expire after 7 days; a revoked invitation behaves the same way.
+- An **expired** invite (older than 7 days) reads `This invite has expired` /
+  `Ask {admin's name} to send a new one.` — wait out an invite only if you have one that old.
+- The dead `Request a new invite` button was removed on 2026-10-09.
+- Signed in while opening a used link, the body reads `This invite was used, and you're signed in.`
+  and the button is **Go to my dashboard** instead (TC-503 covers signed-in links).
 
 ---
 
@@ -975,7 +980,7 @@ not an oracle — every Expected Result below is still something you see in the 
 
 ---
 
-### TC-502 · A short password on the invitation form is refused silently
+### TC-502 · A short password on the invitation form is refused in plain words
 
 | Field | Value |
 |---|---|
@@ -1001,32 +1006,33 @@ not an oracle — every Expected Result below is still something you see in the 
 5. Correct the password to `QaTest-2026!` and click **Join workspace** again.
 
 **Expected**
-- After step 3 you stay on the `Join {workspace}` form. The `Email` field is still filled and
-  disabled and the form is otherwise untouched.
-- Nothing is shown to the user: no error against `Set a password`, no banner, and **not** the
-  `This invite link has expired` card.
-- Step 5 succeeds — the account is created and the browser lands on `/` — proving the token was not
-  consumed or invalidated by the failed attempt.
+- As you type `Short1`, the help line under `Set a password` reads
+  `Too short. Use at least 8 characters.`
+- After step 3 you stay on the `Join {workspace}` form, the `Email` field still filled and disabled,
+  and the line under the password reads `Use at least 8 characters.` — **not**
+  `Ensure this field has at least 8 characters.`
+- That message goes away as soon as you change the password.
+- Step 5 succeeds — the account is created and the browser lands on `/setup` — proving the token was
+  not consumed by the failed attempt.
 
 **Pass / Fail**
-- PASS if the 6-character password is refused, the token survives, and the corrected password then
-  works.
-- FAIL if the account is created with a 6-character password, or the failed attempt burns the token
-  and step 5 lands on `This invite link has expired`.
+- PASS if the 6-character password is refused with that wording, the token survives, and the
+  corrected password then works.
+- FAIL if the account is created with a 6-character password, the refusal is silent or worded for a
+  developer, or the failed attempt burns the token (Bugs S.No 361).
 
 **Test data**
 - `qa+a.shortpw@edvensoft.com` · rejected `Short1` · accepted `QaTest-2026!`
 
 **Notes**
-- The accept-invite screen only renders its error card for a used/expired invitation (409/410).
-  A 400 — which is what a short password produces — is swallowed entirely. That is the same tracked
-  silent-400 defect as TC-003; confirm it, do not raise it again.
-- The account created in step 5 is throwaway. Leave it; it is isolated inside your workspace and
-  does not disturb P10 Engineer from TC-021.
+- The silent-400 defect this case was written for was fixed earlier (Bugs S.No 219); the wording
+  was fixed on 2026-10-09.
+- `Your name` is required now — leave it empty and `Enter your name.` appears (TC-947).
+- The account created in step 5 is throwaway. Leave it; it is isolated inside your workspace.
 
 ---
 
-### TC-504 · A short password on the reset form is refused silently
+### TC-504 · A short password on the reset form is refused in plain words
 
 | Field | Value |
 |---|---|
@@ -1050,37 +1056,38 @@ not an oracle — every Expected Result below is still something you see in the 
 5. Change both fields to `QaTest-2026!` and click **Update password** again.
 
 **Expected**
-- After step 3 you stay on the `Set a new password` form with both fields intact.
-- Nothing is shown to the user: no error against `New password`, no banner, and **not** the
-  `This reset link is invalid` card.
+- As you type `Short1`, the help line under `New password` reads
+  `Too short. Use at least 8 characters.`
+- After step 3 you stay on the `Set a new password` form with both fields intact, and the line
+  under `New password` reads `Use at least 8 characters.` — **not** the `This reset link is
+  invalid` card.
 - Step 5 succeeds and the heading becomes `Password updated` — the token was not consumed by the
   rejected attempt.
 
 **Pass / Fail**
-- PASS if the 6-character password is refused, the token survives, and the corrected password then
-  updates successfully.
-- FAIL if the password is changed to `Short1`, or the failed attempt invalidates the token so
-  step 5 shows `This reset link is invalid`.
+- PASS if the 6-character password is refused with that wording, the token survives, and the
+  corrected password then updates successfully.
+- FAIL if the password is changed to `Short1`, the refusal is silent or says `Ensure this field…`,
+  or step 5 shows `This reset link is invalid`.
 
 **Test data**
 - Account `qa+submit@edvensoft.com` · rejected `Short1` · accepted `QaTest-2026!`
 
 **Notes**
 - Use the throwaway account, not the admin — this case deliberately changes a password.
-- The reset screen renders its error card only for a 410 (used/expired token). A 400 from a short
-  password shows nothing at all — the same tracked silent-400 defect as TC-003. Confirm, do not
-  re-raise.
+- The reset email's button opens `/reset?token=…`. Before 2026-10-09 it pointed at
+  `/reset-password`, a page that does not exist (Bugs S.No 356) — TC-949 covers that.
 
 ---
 
-### TC-503 · A signed-in user opening an invite or reset link is bounced with no explanation
+### TC-503 · A signed-in user opening an invite or reset link is told what to do
 
 | Field | Value |
 |---|---|
 | Suite | TS-01 Identity & Access |
 | Type | UX |
 | Priority | Medium |
-| Screen | `/accept-invite?token=…` · `/reset?token=…` → `/` |
+| Screen | `/accept-invite?token=…` · `/reset?token=…` |
 | Persona | P1 Owner-Admin |
 | Automation | Yes |
 
@@ -1090,32 +1097,159 @@ not an oracle — every Expected Result below is still something you see in the 
   TC-017). A stale link works too — the guard fires before the token is ever looked at.
 
 **Steps**
-1. While signed in, paste the `/accept-invite?token=…` link into the address bar and press Enter.
-2. Note where you end up and what, if anything, the app tells you.
-3. Repeat with the `/reset?token=…` link.
-4. Confirm you are still signed in as P1 Owner-Admin (check the avatar menu).
+1. While signed in, paste the unused `/accept-invite?token=…` link into the address bar and press
+   Enter. Read the card.
+2. Click **Go to my dashboard**. Confirm you are still signed in as P1 Owner-Admin.
+3. Paste the `/reset?token=…` link and read the card.
+4. Click **Sign out and continue**.
 
 **Expected**
-- Both links land on `/` with the dashboard rendered. Neither the `Join {workspace}` form nor the
-  `Set a new password` form is shown.
-- **No message of any kind is shown** — no banner, no toast, no explanation that the link was
-  ignored because you are already signed in. The user is simply dropped on the dashboard.
-- The existing session is untouched: you are still P1 Owner-Admin, and the invitation/reset token is
-  **not** consumed (a private window can still open the same link and use it).
+- Step 1: `Join {workspace}`, `This invite is for {invited address}.`, and an amber line
+  `You're signed in as {your address}. Sign out to accept this invite.` with **Sign out and
+  continue** and **Go to my dashboard**.
+- Step 2 lands on the dashboard; the session is untouched and the invite is **not** used up.
+- Step 3: `Set a new password` with `You're signed in as {your address}. Sign out to set a new
+  password with this link.` and the same two buttons.
+- Step 4 signs you out and shows the `Set a new password` form for the link.
 
 **Pass / Fail**
-- PASS if both links redirect to `/`, the session is untouched, and the token is still usable in a
-  private window.
-- FAIL if the app signs you out, consumes the token, renders the invite/reset form over an active
-  session, or errors.
+- PASS if both links explain themselves, neither consumes its token without consent, and Sign out
+  and continue shows the right form.
+- FAIL if either link silently lands on the dashboard (the behaviour before 2026-10-09 — Bugs
+  S.No 358 and 360), signs you out without asking, or consumes the token.
 
 **Test data**
 - One unused invite link · one unused reset link
 
 **Notes**
-- The silent bounce is the point of this case: someone forwarded an invite to a colleague who is
-  already a member, or clicked their own reset link in a logged-in tab, and the product says nothing.
-  Raise it once as a **Low** UX defect against this case.
-- Verify the token survived by opening the same link in a private window afterwards — that is the
-  only browser-visible proof, and it matters because a consumed token would make this High, not Low.
-- Do not confuse this with TC-016, which covers `/login` and `/signup` behind the same guard.
+- After step 4 you are signed out. Sign back in as P1 Owner-Admin before the next case, and do not
+  submit the reset form unless you mean to change that account's password.
+- Opening `/reset` with **no** link while signed in still goes straight to the dashboard — there is
+  nothing to do there.
+
+---
+
+### TC-947 · Joining asks for a name
+
+| Field | Value |
+|---|---|
+| Suite | TS-01 Identity & Access |
+| Type | Negative |
+| Priority | Medium |
+| Screen | `/accept-invite?token=…` |
+| Persona | Any |
+| Automation | Yes |
+
+**Why this case exists.** The name was optional; left blank, the new account went by its email
+address on every screen. Bugs S.No 364.
+
+**Preconditions**
+- A fresh, unused invite link created **without** a name in the drawer. Not signed in.
+
+**Steps**
+1. Open the link. Leave `Your name` empty, enter a valid password, click **Join workspace**.
+2. Type a name and click **Join workspace** again.
+
+**Expected**
+- Step 1: `Enter your name.` under `Your name`; nothing is sent and the link still works.
+- The message disappears as soon as you type.
+- Step 2 joins and lands on `/setup`; the avatar shows the name's initials, not the email's first
+  letter.
+
+**Pass / Fail**
+- PASS if a blank name is refused before anything is sent and a named join succeeds.
+- **FAIL if an account is created with no name.**
+
+---
+
+### TC-948 · Every role the invite grants is named
+
+| Field | Value |
+|---|---|
+| Suite | TS-01 Identity & Access |
+| Type | Functional |
+| Priority | Medium |
+| Screen | invite email · `/accept-invite?token=…` · `/setup` |
+| Persona | P1 Owner-Admin, then the invitee |
+| Automation | Yes |
+
+**Why this case exists.** The invite page — and the first version of the email — named only the
+first role granted. Bugs S.No 359.
+
+**Preconditions**
+- SendGrid on (for the email part), an inbox you own.
+
+**Steps**
+1. Invite your address with two grants on one project: `Engineer` and `Architect`.
+2. Read the email; open its **Join the workspace** button and read the page; join and read `/setup`.
+3. Optional: invite another address with grants on **two** projects and read its invite page.
+
+**Expected**
+- Email: `You'll join {project} as Engineer and Architect. Set a password to get started.`
+- Invite page: `You've been invited by {admin} as Engineer and Architect on {project}.`
+- `/setup`: `You've joined as Engineer and Architect. One step left.`
+- Two projects: `… as Engineer on {project 1} and as Designer on {project 2}.`
+- Three roles read `Engineer, Architect and QA Lead`.
+
+**Pass / Fail**
+- **FAIL if any of the three places names only one of the granted roles.**
+
+---
+
+### TC-949 · The password-reset email opens the set-password form
+
+| Field | Value |
+|---|---|
+| Suite | TS-01 Identity & Access |
+| Type | E2E |
+| Priority | High |
+| Screen | reset email → `/reset?token=…` |
+| Persona | Any (a throwaway account) |
+| Automation | No |
+
+**Why this case exists.** The reset email linked to `/reset-password`, a page that does not exist,
+so every emailed reset link fell through to the dashboard redirect and never reached the form.
+Bugs S.No 356.
+
+**Preconditions**
+- SendGrid on, and a throwaway account whose inbox you can read. Signed out.
+
+**Steps**
+1. On `/login` click **Forgot password?**, enter the throwaway address, click **Send reset link**.
+2. Open the email `Reset your SDLC app password` and click **Set a new password**.
+3. Set a new password and sign in with it.
+
+**Expected**
+- The email arrives, says the link works for one hour, and that the password stays the same if you
+  ignore it.
+- Step 2 opens `Set a new password` — `Choose a strong password for your account.` — at an address
+  ending `/reset?token=…`.
+- Step 3 shows `Password updated`, and signing in with the new password works.
+
+**Pass / Fail**
+- **FAIL if the button opens the login page or the dashboard instead of the form.**
+
+---
+
+### TC-950 · The login card does not repeat itself
+
+| Field | Value |
+|---|---|
+| Suite | TS-01 Identity & Access |
+| Type | UX |
+| Priority | Low |
+| Screen | `/login` |
+| Persona | Any |
+| Automation | Yes |
+
+**Why this case exists.** The left panel and the card both said `Welcome back.` Bugs S.No 366.
+
+**Steps**
+1. Open `/login` signed out.
+
+**Expected**
+- Left panel: `Welcome back.` / `Pick up your lifecycle where you left off.`
+- Card: `Log in` / `Sign in to your workspace.`
+
+**Pass / Fail**
+- FAIL if `Welcome back.` appears twice.

@@ -11,7 +11,9 @@ context set by `TenantContextMiddleware`.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
+import smtplib
 from datetime import timedelta
 
 from django.db import transaction
@@ -23,6 +25,8 @@ from apps.registry.catalog import gate_roles, seed_agent_specs
 from apps.tenancy.context import tenant_context
 from apps.tenancy.emails import send_invitation_email, send_password_reset_email
 from apps.tenancy.models import Invitation, Membership, Tenant, User
+
+log = logging.getLogger(__name__)
 
 # Token lifetimes.
 INVITE_TTL = timedelta(days=7)
@@ -37,9 +41,28 @@ class InvitationError(Exception):
     """An invitation could not be created or accepted. `status` maps to the HTTP code the
     view returns (409 conflict / used, 410 gone / expired-or-revoked, 400 otherwise)."""
 
-    def __init__(self, message: str, status: int = 409):
+    def __init__(self, message: str, status: int = 409, *, reason: str = "",
+                 inviter_name: str | None = None):
         super().__init__(message)
         self.status = status
+        # 2026-10-09: the accept page words each failure on its own ("You've already joined",
+        # "expired", "cancelled", "link isn't complete") instead of calling all of them
+        # "expired". `reason` picks the words; it is never shown.
+        self.reason = reason
+        self.inviter_name = inviter_name
+
+
+def _send_safely(send, *args, what: str) -> bool:
+    """Send one transactional email; True when it went. A mail-service failure (SendGrid
+    down, a wrong key, an unverified sender) must not undo the invite or the reset it
+    belongs to - the admin can Resend. The reason goes to the server log only, never the
+    token or the link."""
+    try:
+        send(*args)
+        return True
+    except (smtplib.SMTPException, OSError) as exc:
+        log.error("The %s email could not be sent: %s: %s", what, type(exc).__name__, exc)
+        return False
 
 
 class ResetError(Exception):
@@ -118,6 +141,15 @@ def create_invitation(*, tenant, invited_by, email: str, name: str = "",
     email = email.strip().lower()
     if User.objects.filter(email__iexact=email).exists():
         raise InvitationError("A user with this email already exists.")
+    # 2026-10-09 (team-approved mockup 8): a second invite to someone still holding one made two
+    # live links for one person — and accepting the second then failed on the duplicate account.
+    waiting = Invitation.objects.filter(
+        email__iexact=email, status=Invitation.Status.PENDING, expires_at__gt=timezone.now(),
+    )
+    if waiting.exists():
+        raise InvitationError(
+            f"{email} already has an invite waiting. Use Resend on their row instead."
+        )
     # Normalize grants to JSON-safe primitives (UUIDField hands us UUID objects).
     norm_grants = [
         {"project_id": str(g["project_id"]), "role": str(g["role"])}
@@ -129,7 +161,8 @@ def create_invitation(*, tenant, invited_by, email: str, name: str = "",
         token_hash=token_hash, invited_by=invited_by,
         expires_at=timezone.now() + INVITE_TTL,
     )
-    send_invitation_email(invitation, raw)
+    # 2026-10-09: read by the view as `email_sent`, so the admin is told whether it went.
+    invitation.email_sent = _send_safely(send_invitation_email, invitation, raw, what="invitation")
     return invitation, raw
 
 
@@ -144,7 +177,7 @@ def resend_invitation(invitation: Invitation) -> str:
     invitation.token_hash = token_hash
     invitation.expires_at = timezone.now() + INVITE_TTL
     invitation.save(update_fields=["token_hash", "expires_at", "updated_at"])
-    send_invitation_email(invitation, raw)
+    invitation.email_sent = _send_safely(send_invitation_email, invitation, raw, what="invitation")
     return raw
 
 
@@ -157,6 +190,31 @@ def revoke_invitation(invitation: Invitation) -> Invitation:
     return invitation
 
 
+def _inviter_name(invitation: Invitation) -> str | None:
+    """Who to ask for a new invite. Read inside the invite's own tenant (RLS)."""
+    if not invitation.invited_by_id:
+        return None
+    with tenant_context(invitation.tenant_id):
+        return invitation.invited_by.name or None
+
+
+def _refuse_unusable(invitation: Invitation | None) -> None:
+    """The refusals preview and accept share (expiry by date is checked by each, because
+    accept also records it). Each carries the `reason` the page words it by."""
+    if invitation is None:
+        raise InvitationError("This invitation link is not valid.", status=410, reason="invalid")
+    if invitation.status == Invitation.Status.ACCEPTED:
+        raise InvitationError("This invitation has already been used.", status=409,
+                              reason="used")
+    if invitation.status in (Invitation.Status.REVOKED, Invitation.Status.EXPIRED):
+        expired = invitation.status == Invitation.Status.EXPIRED
+        raise InvitationError(
+            "This invitation has expired." if expired else "This invitation has been revoked.",
+            status=410, reason="expired" if expired else "revoked",
+            inviter_name=_inviter_name(invitation),
+        )
+
+
 def get_invitation_preview(token: str) -> dict:
     """Look up an invitation by its raw token for the pre-auth accept-invite page. Read-only —
     unlike `accept_invitation()`, this never transitions `status` (not even on an expired
@@ -166,14 +224,10 @@ def get_invitation_preview(token: str) -> dict:
     uses — the RLS bootstrap carve-out (0006) is what makes the initial token-hash lookup
     itself possible before any tenant is known."""
     invitation = Invitation.objects.filter(token_hash=_hash_token(token)).first()
-    if invitation is None:
-        raise InvitationError("This invitation link is not valid.", status=410)
-    if invitation.status == Invitation.Status.ACCEPTED:
-        raise InvitationError("This invitation has already been used.", status=409)
-    if invitation.status == Invitation.Status.REVOKED:
-        raise InvitationError("This invitation has been revoked.", status=410)
+    _refuse_unusable(invitation)
     if invitation.is_expired:
-        raise InvitationError("This invitation has expired.", status=410)
+        raise InvitationError("This invitation has expired.", status=410, reason="expired",
+                              inviter_name=_inviter_name(invitation))
 
     with tenant_context(invitation.tenant_id):
         tenant_name = invitation.tenant.name
@@ -207,16 +261,19 @@ def accept_invitation(*, token: str, password: str, name: str | None = None) -> 
     invite accepted, atomically. Pre-auth lookup by token hash (like login, this rides the
     superuser/test path; production pre-auth RLS bootstrap is a separate concern)."""
     invitation = Invitation.objects.filter(token_hash=_hash_token(token)).first()
-    if invitation is None:
-        raise InvitationError("This invitation link is not valid.", status=410)
-    if invitation.status == Invitation.Status.ACCEPTED:
-        raise InvitationError("This invitation has already been used.", status=409)
-    if invitation.status == Invitation.Status.REVOKED:
-        raise InvitationError("This invitation has been revoked.", status=410)
+    _refuse_unusable(invitation)
     if invitation.is_expired:
         invitation.status = Invitation.Status.EXPIRED
         invitation.save(update_fields=["status", "updated_at"])
-        raise InvitationError("This invitation has expired.", status=410)
+        raise InvitationError("This invitation has expired.", status=410, reason="expired",
+                              inviter_name=_inviter_name(invitation))
+
+    # The account may already exist (another invite to the same address was accepted first, or
+    # they signed up on their own). Email is unique across the platform, so creating it again was
+    # a server error; it is a link that has already done its job.
+    if User.objects.filter(email__iexact=invitation.email).exists():
+        raise InvitationError("An account with this email already exists.", status=409,
+                              reason="used")
 
     with transaction.atomic():
         with tenant_context(invitation.tenant_id):
@@ -250,7 +307,8 @@ def request_password_reset(*, email: str) -> str | None:
     user.reset_token_expires = timezone.now() + RESET_TTL
     with tenant_context(user.tenant_id):
         user.save(update_fields=["reset_token_hash", "reset_token_expires", "updated_at"])
-    send_password_reset_email(user, raw)
+    # Silent to the person either way (no account enumeration); a failure is logged.
+    _send_safely(send_password_reset_email, user, raw, what="password reset")
     return raw
 
 

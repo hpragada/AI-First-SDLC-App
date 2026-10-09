@@ -98,6 +98,14 @@ class LoginView(APIView):
         return Response(body)
 
 
+def _invitation_refusal(exc) -> Response:
+    """A refused invite, with what the accept page needs to word it (2026-10-09)."""
+    return Response(
+        {"detail": str(exc), "reason": exc.reason, "inviter_name": exc.inviter_name},
+        status=exc.status,
+    )
+
+
 class InvitationPreviewView(APIView):
     """POST /api/auth/invitations/preview — {token} → the org/inviter/role/project display
     fields the accept-invite page needs before the user submits anything. Public + no session
@@ -113,7 +121,7 @@ class InvitationPreviewView(APIView):
         try:
             preview = get_invitation_preview(token)
         except InvitationError as exc:
-            return Response({"detail": str(exc)}, status=exc.status)
+            return _invitation_refusal(exc)
         return Response(preview)
 
 
@@ -135,7 +143,7 @@ class AcceptInvitationView(APIView):
                 name=ser.validated_data.get("name") or None,
             )
         except InvitationError as exc:
-            return Response({"detail": str(exc)}, status=exc.status)
+            return _invitation_refusal(exc)
         # Same tenant-context requirement as SignupView — see comment there.
         with tenant_context(user.tenant_id):
             login(request, user, backend=_MODEL_BACKEND)

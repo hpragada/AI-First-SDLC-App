@@ -6,6 +6,7 @@ import { useAuth } from "../../auth/AuthContext";
 import {
   Avatar,
   Badge,
+  Banner,
   Button,
   Drawer,
   EmptyState,
@@ -16,7 +17,7 @@ import {
   Table,
   WriteError,
 } from "../../components/ui";
-import type { AdminUser, Invitation } from "../../types";
+import type { AdminUser, Invitation, InvitationSent } from "../../types";
 import {
   useCreateInvitation,
   useInvitations,
@@ -26,6 +27,24 @@ import {
 } from "./hooks";
 import { ROLES, roleLabel } from "./roles";
 import { SetupReturnLink } from "./SetupReturnLink";
+import { fullWhen, whenLabel } from "./when";
+
+// 2026-10-09 (team-approved mockup 2): after Send invite and Resend, the admin is told what
+// actually happened to the email. Before, the drawer just closed, and the link existed only in
+// the server terminal.
+function SentNotice({ sent }: { sent: InvitationSent }) {
+  if (sent.email_delivery === "console") {
+    return <Banner variant="info">Invite created. The link is in the server terminal.</Banner>;
+  }
+  if (!sent.email_sent) {
+    return (
+      <Banner variant="danger">
+        The invite was saved but the email couldn&apos;t be sent. Try Resend in a few minutes.
+      </Banner>
+    );
+  }
+  return <Banner variant="success">Invite emailed to {sent.email}</Banner>;
+}
 
 // S-07 view states: populated · invite-drawer · dup-error · empty.
 export type UsersView = "populated" | "invite-drawer" | "dup-error" | "empty";
@@ -56,9 +75,11 @@ function invitationGrantSummary(inv: Invitation, projectNames: Map<string, strin
 function InviteDrawer({
   dup,
   onClose,
+  onSent,
 }: {
   dup?: boolean;
   onClose: () => void;
+  onSent?: (sent: InvitationSent) => void;
 }) {
   const { currentUser } = useAuth();
   const createInvitation = useCreateInvitation();
@@ -101,11 +122,12 @@ function InviteDrawer({
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      await createInvitation.mutateAsync({
+      const sent = await createInvitation.mutateAsync({
         email,
         name: name || undefined,
         grants: grants.filter((g) => g.project_id).length ? grants.filter((g) => g.project_id) : undefined,
       });
+      onSent?.(sent);
       onClose();
     } catch {
       /* duplicate surfaced inline */
@@ -222,6 +244,7 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
   const resend = useResendInvitation();
   const revoke = useRevokeInvitation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sent, setSent] = useState<InvitationSent | null>(null);
 
   const list = users.data ?? [];
   // GET /users/ only ever returns accepted accounts — pending invites are a separate
@@ -269,12 +292,17 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
         <span className="table__primary">{inv.name || inv.email}</span>
       </div>,
       inv.email,
-      <Badge variant="gate" key="s">
-        Invited · pending
-      </Badge>,
+      <span key="s" style={{ display: "flex", flexDirection: "column", gap: "2px", alignItems: "flex-start" }}>
+        <Badge variant="gate">Invited · waiting to join</Badge>
+        {inv.sent_at && (
+          <span className="t-xs u-muted">
+            sent <time dateTime={inv.sent_at} title={fullWhen(inv.sent_at)}>{whenLabel(inv.sent_at)}</time>
+          </span>
+        )}
+      </span>,
       invitationGrantSummary(inv, projectNames),
       <span className="u-row-tight" key="a">
-        <Button variant="ghost" size="sm" onClick={() => resend.mutate(inv.id)}>
+        <Button variant="ghost" size="sm" onClick={() => resend.mutate(inv.id, { onSuccess: setSent })}>
           Resend
         </Button>
         <Button variant="danger" size="sm" onClick={() => revoke.mutate(inv.id)}>
@@ -302,6 +330,12 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
           + Invite
         </Button>
       </div>
+
+      {sent && !resend.isError && !revoke.isError && (
+        <div style={{ marginBottom: "var(--space-4)" }}>
+          <SentNotice sent={sent} />
+        </div>
+      )}
 
       {/* S.No 220: both queries are read as `?? []`, so a failed one produced an empty roster and
           this screen then told an admin their whole team was just them. That is the most alarming
@@ -351,7 +385,11 @@ export function UsersInvites({ forceView }: { forceView?: UsersView }) {
       )}
 
       {(view === "invite-drawer" || view === "dup-error") && (
-        <InviteDrawer dup={view === "dup-error"} onClose={() => setDrawerOpen(false)} />
+        <InviteDrawer
+          dup={view === "dup-error"}
+          onClose={() => setDrawerOpen(false)}
+          onSent={setSent}
+        />
       )}
     </div>
   );

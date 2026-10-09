@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { Badge, Button, Card, CardBody } from "../../components/ui";
 import { useRunners, useUsers } from "./hooks";
+import { andList, roleLabel } from "./roles";
 
 // S-05 view states: all-incomplete · partial (2 of 4) · all-complete (dismiss).
 export type SetupView = "all-incomplete" | "partial" | "complete";
@@ -41,6 +42,67 @@ function StepCard({ step, active }: { step: Step; active: boolean }) {
 }
 
 export function SetupChecklist({ forceView }: { forceView?: SetupView }) {
+  const { currentUser, isAdmin } = useAuth();
+  // 2026-10-09 (team-approved mockup 6): a teammate who joined by invite was shown the
+  // workspace owner's four steps — two of them admin-only, one ending at "Admin access
+  // needed". They get their own page. The gallery (forceView) keeps the owner's.
+  if (!forceView && currentUser && !isAdmin) return <TeammateSetup />;
+  return <OwnerSetup forceView={forceView} />;
+}
+
+function TeammateSetup() {
+  const { currentUser, selectedProject } = useAuth();
+  const runners = useRunners();
+  const hasMachine = Boolean(runners.data?.some((r) => r.online || r.last_seen));
+  const steps: Step[] = [
+    { id: "1", title: "Join the workspace", done: true, action: null },
+    {
+      id: "2",
+      title: "Connect your machine",
+      desc: hasMachine
+        ? `${runners.data?.[0]?.machine || "Machine"} connected.`
+        : "Phases you start run on your computer.",
+      done: hasMachine,
+      action: (
+        <Link to="/connect" className="btn btn--primary">
+          Connect
+        </Link>
+      ),
+    },
+  ];
+  const project = selectedProject ?? currentUser?.memberships[0];
+  // Every role held on this project (memberships are one row per role), in the order granted.
+  const roles = [
+    ...new Set(
+      (currentUser?.memberships ?? [])
+        .filter((m) => m.project_id === project?.project_id)
+        .map((m) => roleLabel(m.role)),
+    ),
+  ];
+  return (
+    <div className="canvas-pad" style={{ maxWidth: "880px" }}>
+      <div className="page-head">
+        <div className="page-head__titles">
+          <h1 className="t-display">Welcome to {project?.project_name ?? currentUser?.tenant.name}</h1>
+          <p className="page-head__sub">
+            {roles.length ? `You've joined as ${andList(roles)}. ` : ""}
+            {hasMachine ? "You're ready to run phases." : "One step left."}
+          </p>
+        </div>
+      </div>
+      <div className="u-stack">
+        {steps.map((step) => (
+          <StepCard key={step.id} step={step} active={!step.done} />
+        ))}
+      </div>
+      <p className="t-sm u-muted" style={{ marginTop: "var(--space-3)" }}>
+        Inviting people and integrations are set up by your workspace admin.
+      </p>
+    </div>
+  );
+}
+
+function OwnerSetup({ forceView }: { forceView?: SetupView }) {
   const { currentUser } = useAuth();
   const runners = useRunners();
   const users = useUsers();

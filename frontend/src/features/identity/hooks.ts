@@ -226,6 +226,16 @@ export function useSetTenantAdmin() {
 }
 
 // Password-strength estimate (0–4) — drives the <Strength> bars on signup/invite/reset.
+/** What the meter under a password box says (team-approved mockup 4, 2026-10-09). Every
+ *  screen used to print "Strong" for anything typed, even "abc". Under 8 characters the
+ *  server will refuse it, so that is said first; after that the label follows the bars. */
+export function passwordHelp(value: string): { tooShort: boolean; text: string } | null {
+  if (!value) return null;
+  if (value.length < 8) return { tooShort: true, text: "Too short. Use at least 8 characters." };
+  const label = ["Weak", "Weak", "Fair", "Good", "Strong"][passwordStrength(value)];
+  return { tooShort: false, text: label };
+}
+
 export function passwordStrength(value: string): 0 | 1 | 2 | 3 | 4 {
   if (!value) return 0;
   let score = 0;

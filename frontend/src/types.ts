@@ -441,7 +441,15 @@ export interface Invitation {
   name?: string;
   status: string; // "pending" | "revoked" | "accepted" | "expired"
   expires_at: string;
+  sent_at?: string;
   grants: InvitationGrant[];
+}
+
+/** What Send invite / Resend report back (2026-10-09): whether the email went, or that this copy
+ *  of the app has no mail service and printed the link to the server terminal instead. */
+export interface InvitationSent extends Invitation {
+  email_sent: boolean;
+  email_delivery: "email" | "console";
 }
 
 export interface AdminUserMembership {

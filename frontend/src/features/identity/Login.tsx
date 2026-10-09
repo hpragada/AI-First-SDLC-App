@@ -103,7 +103,7 @@ export function Login({ forceView }: { forceView?: LoginView }) {
             Your password wasn't checked. Try again in a moment.
           </Banner>
         ) : (
-          <p className="auth-card__sub">Welcome back.</p>
+          <p className="auth-card__sub">Sign in to your workspace.</p>
         )}
         <Field label="Work email">
           <Input

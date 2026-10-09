@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError, fieldError, formError } from "../../api";
+import { useAuth } from "../../auth/AuthContext";
 import { AuthSplit, Banner, Button, Field, Input, Spinner, Strength } from "../../components/ui";
-import { passwordStrength, useRequestReset, useResetPassword } from "./hooks";
+import { passwordHelp, passwordStrength, useRequestReset, useResetPassword } from "./hooks";
 
 const TAGLINE = "Reset your password.";
 
@@ -16,7 +17,10 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
   const requestReset = useRequestReset();
   const reset = useResetPassword();
 
-  const [email, setEmail] = useState("sarah@acme.com");
+  const navigate = useNavigate();
+  const { isAuthenticated, currentUser, logout } = useAuth();
+  // Mockup 6: was pre-filled with a made-up address, which a hurried person would submit.
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [sent, setSent] = useState(false);
@@ -24,7 +28,9 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
 
   const invalidToken =
     forceView === "invalid-token" ||
-    (reset.error instanceof ApiError && reset.error.status === 410);
+    // Only while a link is in hand: "Request a new link" goes to /reset (no token) on this same
+    // screen, and the old refusal must not follow it there.
+    (Boolean(token) && reset.error instanceof ApiError && reset.error.status === 410);
 
   // With a token present the screen is the "set new password" flow; otherwise the request flow.
   const view: ResetView =
@@ -51,7 +57,9 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
 
   // Bugs S.No 219: this branched on 410 (the link has expired) and dropped everything else, so
   // a password the server rejected as too short left the form untouched and silent.
-  const passwordError = fieldError(reset.error, "password");
+  const help = passwordHelp(password);
+  const passwordError =
+    fieldError(reset.error, "password") ?? (help?.tooShort ? help.text : undefined);
   const bannerError = invalidToken ? undefined : formError(reset.error, ["password"]);
 
   // Found while fixing the above: the form asks you to confirm the new password and then NEVER
@@ -75,6 +83,32 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
       /* invalid-token surfaced via reset.error */
     }
   };
+
+  // Mockup 7: /reset now sits outside the signed-in redirect (routes.tsx), so a reset link
+  // opened where someone is signed in says so instead of vanishing into their dashboard. With no
+  // link in hand, a signed-in person has nothing to do here — back to the dashboard as before.
+  if (!forceView && isAuthenticated && view !== "success") {
+    if (!token) return <Navigate to="/" replace />;
+    return (
+      <AuthSplit tagline={TAGLINE}>
+        <div className="auth-card">
+          <h1 className="auth-card__title">Set a new password</h1>
+          <Banner variant="warning">
+            You're signed in as {currentUser?.user.email}. Sign out to set a new password with this
+            link.
+          </Banner>
+          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
+            <Button variant="primary" onClick={() => void logout()}>
+              Sign out and continue
+            </Button>
+            <Button variant="secondary" onClick={() => navigate("/", { replace: true })}>
+              Go to my dashboard
+            </Button>
+          </div>
+        </div>
+      </AuthSplit>
+    );
+  }
 
   if (view === "success") {
     return (
@@ -127,9 +161,9 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
           <p className="auth-card__sub">
             It may have expired or already been used. Request a fresh link to continue.
           </p>
-          <Button variant="secondary" block>
+          <Link to="/reset" className="btn btn--secondary btn--block">
             Request a new link
-          </Button>
+          </Link>
         </div>
       </AuthSplit>
     );
@@ -143,11 +177,15 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
           {bannerError ? (
             <Banner variant="danger">{bannerError}</Banner>
           ) : (
-            <p className="auth-card__sub">Choose a strong password for {email}.</p>
+            <p className="auth-card__sub">Choose a strong password for your account.</p>
           )}
-          <Field label="New password" error={passwordError}>
+          <Field label="New password" error={passwordError}
+                 help={help && !passwordError ? help.text : undefined}>
             <Input type="password" value={password} aria-invalid={Boolean(passwordError)}
-                   onChange={(e) => setPassword(e.target.value)} />
+                   onChange={(e) => {
+                     if (reset.error && !invalidToken) reset.reset();
+                     setPassword(e.target.value);
+                   }} />
             <Strength value={passwordStrength(password)} />
           </Field>
           <Field
@@ -185,7 +223,8 @@ export function ResetPassword({ forceView }: { forceView?: ResetView }) {
         <h1 className="auth-card__title">Forgot your password?</h1>
         <p className="auth-card__sub">Enter your work email and we'll send a reset link.</p>
         <Field label="Work email">
-          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input type="email" placeholder="you@company.com" value={email}
+                 onChange={(e) => setEmail(e.target.value)} />
         </Field>
         <Button variant="primary" block type="submit" disabled={requestReset.isPending}>
           Send reset link

@@ -489,3 +489,138 @@ def test_me_carries_the_project_track(client, user, project):
     project.track = Project.Track.BROWNFIELD
     project.save(update_fields=["track"])
     assert client.get("/api/auth/me/").data["memberships"][0]["track"] == "brownfield"
+
+
+# ── 2026-10-09: invite suite — email outcome and honest refusals ────
+def test_invite_reports_email_sent_and_mail_goes_out(client, admin, project, mailoutbox):
+    _login(client, "boss@acme.com", "admin-pass!")
+    resp = client.post(
+        "/api/invitations/",
+        {"email": "mailed@acme.com",
+         "grants": [{"project_id": str(project.id), "role": "engineer"}]},
+        format="json",
+    )
+    assert resp.status_code == 201
+    assert resp.data["email_sent"] is True
+    assert len(mailoutbox) == 1
+    assert mailoutbox[0].to == ["mailed@acme.com"]
+    assert "/accept-invite?token=" in mailoutbox[0].body
+
+
+def test_a_mail_failure_keeps_the_invite_and_says_so(client, admin, monkeypatch):
+    import smtplib
+
+    from apps.tenancy import services
+
+    def boom(*_a, **_k):
+        raise smtplib.SMTPAuthenticationError(535, b"bad key")
+
+    monkeypatch.setattr(services, "send_invitation_email", boom)
+    _login(client, "boss@acme.com", "admin-pass!")
+    resp = client.post("/api/invitations/", {"email": "kept@acme.com"}, format="json")
+    assert resp.status_code == 201
+    assert resp.data["email_sent"] is False
+    assert Invitation.objects.filter(email="kept@acme.com", status="pending").exists()
+    # Resend reports the same way.
+    inv = Invitation.objects.get(email="kept@acme.com")
+    again = client.post(f"/api/invitations/{inv.id}/resend/", format="json")
+    assert again.status_code == 200
+    assert again.data["email_sent"] is False
+
+
+def test_a_reset_mail_failure_is_silent_to_the_person(client, user, monkeypatch):
+    from apps.tenancy import services
+
+    def boom(*_a, **_k):
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr(services, "send_password_reset_email", boom)
+    resp = client.post("/api/auth/request-reset/", {"email": "sarah@acme.com"}, format="json")
+    assert resp.status_code == 200
+
+
+@pytest.mark.parametrize("case", ["invalid", "used", "revoked", "expired", "expired_recorded"])
+def test_refusals_carry_the_reason_the_page_words_them_by(client, admin, case):
+    if case == "invalid":
+        raw = "not-a-real-token"
+    else:
+        inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin,
+                                     email=f"{case}@acme.com")
+        if case == "used":
+            client.post("/api/auth/accept-invitation/", {"token": raw, "password": "first-pass!"},
+                        format="json")
+            client.post("/api/auth/logout/")
+        elif case == "revoked":
+            inv.status = "revoked"
+            inv.save(update_fields=["status"])
+        else:
+            inv.expires_at = timezone.now() - timedelta(days=1)
+            inv.save(update_fields=["expires_at"])
+            if case == "expired_recorded":  # accept already flipped it to "expired"
+                client.post("/api/auth/accept-invitation/", {"token": raw, "password": "x-pass-1!"},
+                            format="json")
+    want = "expired" if case.startswith("expired") else case
+    for resp in (
+        _preview(client, raw),
+        client.post("/api/auth/accept-invitation/", {"token": raw, "password": "again-pass!"},
+                    format="json"),
+    ):
+        assert resp.data["reason"] == want
+        if want in ("expired", "revoked"):
+            assert resp.data["inviter_name"] == "Boss"
+
+
+def test_invite_email_reads_as_agreed(admin, project, mailoutbox):
+    create_invitation(tenant=admin.tenant, invited_by=admin, email="words@acme.com",
+                      grants=[{"project_id": str(project.id), "role": "engineer"}])
+    msg = mailoutbox[0]
+    assert msg.subject == "Boss invited you to Acme"
+    assert "You'll join Payment Gateway v2 as Engineer." in msg.body
+    assert "This invite works until " in msg.body and "UTC" not in msg.body
+    html = msg.alternatives[0][0]
+    assert "Join the workspace" in html and "/accept-invite?token=" in html
+
+
+def test_reset_email_links_to_the_page_that_exists(user, mailoutbox):
+    request_password_reset(email="sarah@acme.com")
+    assert "/reset?token=" in mailoutbox[0].body
+    assert "/reset-password" not in mailoutbox[0].body
+
+
+def test_invite_email_names_every_role(admin, project, tenant, mailoutbox):
+    other = Project.objects.create(tenant=tenant, name="Payroll")
+    create_invitation(tenant=admin.tenant, invited_by=admin, email="many@acme.com", grants=[
+        {"project_id": str(project.id), "role": "engineer"},
+        {"project_id": str(project.id), "role": "architect"},
+        {"project_id": str(other.id), "role": "designer"},
+    ])
+    assert ("You'll join as Engineer and Architect on Payment Gateway v2 and as Designer on "
+            "Payroll." in mailoutbox[0].body)
+
+
+
+def test_a_second_invite_to_someone_already_waiting_is_refused(client, admin):
+    _login(client, "boss@acme.com", "admin-pass!")
+    assert client.post("/api/invitations/", {"email": "twice@acme.com"},
+                       format="json").status_code == 201
+    again = client.post("/api/invitations/", {"email": "Twice@acme.com"}, format="json")
+    assert again.status_code == 400
+    assert "already has an invite waiting" in str(again.data["email"])
+
+
+def test_joining_with_an_email_that_already_has_an_account_is_refused_not_a_crash(client, admin):
+    inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="late@acme.com")
+    User.objects.create_user(email="late@acme.com", name="Late", tenant=admin.tenant,
+                             password="whatever-pass!")
+    resp = client.post("/api/auth/accept-invitation/", {"token": raw, "password": "pass-pass-1!"},
+                       format="json")
+    assert resp.status_code == 409
+    assert resp.data["reason"] == "used"
+
+
+def test_short_password_is_refused_in_plain_words(client, admin):
+    _inv, raw = create_invitation(tenant=admin.tenant, invited_by=admin, email="short@acme.com")
+    resp = client.post("/api/auth/accept-invitation/", {"token": raw, "password": "abc"},
+                       format="json")
+    assert resp.status_code == 400
+    assert resp.data["password"] == ["Use at least 8 characters."]

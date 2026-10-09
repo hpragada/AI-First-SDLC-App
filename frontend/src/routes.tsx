@@ -146,9 +146,13 @@ export function AppRoutes() {
       <Route element={<RedirectIfAuthed />}>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
-        <Route path="/accept-invite" element={<AcceptInvite />} />
-        <Route path="/reset" element={<ResetPassword />} />
       </Route>
+      {/* 2026-10-09: outside the signed-in redirect for the same reason as /accept-invite —
+          a reset link opened where someone is signed in must not vanish into their dashboard. */}
+      <Route path="/reset" element={<ResetPassword />} />
+      {/* 2026-10-09: outside the signed-in redirect on purpose. A link opened where someone is
+          signed in must still say whose invite it is, not drop into their dashboard. */}
+      <Route path="/accept-invite" element={<AcceptInvite />} />
 
       <Route path="/dev/components" element={<DevComponents />} />
 

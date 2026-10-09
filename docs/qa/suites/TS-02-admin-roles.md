@@ -81,8 +81,11 @@ project, so run TS-03 TC-037 before them.
 - The drawer is titled `Invite teammate` with fields `Work email *` and `Name (optional)` and a
   section labelled `Initial project & role grants`; the footer holds **Cancel** and **Send invite**.
 - Step 4 adds and then removes a grant row without affecting the first one.
-- After step 5 the drawer closes and a new row appears at the top of the table for
-  `qa+a.eng@edvensoft.com` with the badge `Invited · pending`, highlighted background, and
+- After step 5 the drawer closes and a message appears above the table: with SendGrid on, green
+  `Invite emailed to qa+a.eng@edvensoft.com`; without it, blue
+  `Invite created. The link is in the server terminal.` (TC-951 covers all three messages.)
+- A new row appears at the top of the table for `qa+a.eng@edvensoft.com` with the badge
+  `Invited · waiting to join`, the line `sent just now` under it, a highlighted background, and
   `Projects & roles` reading `Engineer @ Payment Gateway v2`.
 - **Resend** and **Revoke** buttons are present on that row.
 
@@ -95,8 +98,9 @@ project, so run TS-03 TC-037 before them.
 - `qa+a.eng@edvensoft.com` · role `Engineer` · project `Payment Gateway v2`
 
 **Notes**
-- The invite link is printed to the backend log (`docker compose logs backend`). **Go and run TS-01
-  TC-021 now** to accept it and create P10 Engineer — TC-034 to TC-036 need that account.
+- With SendGrid on, the invite arrives by email; without it, the link is printed to the backend log
+  (`docker compose logs backend`). **Go and run TS-01 TC-021 now** to accept it and create P10
+  Engineer — TC-034 to TC-036 need that account.
 
 ---
 
@@ -158,26 +162,28 @@ project, so run TS-03 TC-037 before them.
 - A pending invitation exists — create one for `qa+a.po@edvensoft.com` via TC-024's steps if needed.
 
 **Steps**
-1. Read `docker compose logs backend` and copy the **current** invite link for
-   `qa+a.po@edvensoft.com`. Keep it — you need it in step 5.
-2. On `/admin/users`, find the row badged `Invited · pending` for that address and click **Resend**.
-3. Watch the row, then read the backend log again and copy the **new** link.
+1. Copy the **current** invite link for `qa+a.po@edvensoft.com` (from its email, or from
+   `docker compose logs backend` without SendGrid). Keep it — you need it in step 5.
+2. On `/admin/users`, find the row badged `Invited · waiting to join` for that address and click
+   **Resend**.
+3. Read the message above the table and the row, then copy the **new** link.
 4. In a private window, open the new link.
 5. In the same private window, open the link you saved in step 1.
 
 **Expected**
-- The row stays in the table and keeps the badge `Invited · pending` — resending does not remove or
-  duplicate it. The table still holds exactly one row for that address.
-- A **new** invite link is printed to the backend log, different from the previous one.
-- The newly issued link opens the `Join QA Alpha` form — the resend produced a working token.
-- The **previous** link (step 5) now opens `This invite link has expired` — the resend rotated the
-  token.
+- The message above the table reads `Invite emailed to qa+a.po@edvensoft.com` (SendGrid on) or
+  `Invite created. The link is in the server terminal.` (off).
+- The row stays in the table with the badge `Invited · waiting to join`, and its line now reads
+  `sent just now` — resending does not remove or duplicate it.
+- The newly issued link opens the `Join QA Alpha` form.
+- The **previous** link (step 5) now reads `This link doesn't work any more` / `A newer invite may
+  have replaced it. Open the most recent invite email, or ask your workspace admin.`
 
 **Pass / Fail**
-- PASS if exactly one pending row survives, the new link opens the join form, and the old link is
-  dead.
-- FAIL if the row disappears or is duplicated, no new link is printed, the resent link opens the
-  expired card, or the old link still works.
+- PASS if exactly one pending row survives, the message says what happened, the new link opens the
+  join form, and the old link is dead.
+- FAIL if the row disappears or is duplicated, no message appears, the resent link does not work,
+  or the old link still works.
 
 **Test data**
 - `qa+a.po@edvensoft.com`
@@ -185,12 +191,8 @@ project, so run TS-03 TC-037 before them.
 **Notes**
 - **The old link going dead is the oracle, not a defect.** Resending rotates the token and extends
   the expiry by design.
-- The original version of this case asked you to confirm "no error appears anywhere". That can never
-  fail and so proves nothing: the resend button has no error handler and the screen has no error
-  surface at all — a resend that fails on the server looks identical to one that succeeds. The
-  new-link/old-link check above is what actually distinguishes them. If the resend **is** silently
-  failing (no new link in the log, old link still live), raise it as a **Medium** defect for the
-  missing failure feedback as well as the broken resend.
+- The old link's page cannot tell "replaced" from "damaged", so it says both, without blaming the
+  reader (Bugs S.No 357).
 
 ---
 
@@ -219,9 +221,10 @@ project, so run TS-03 TC-037 before them.
 
 **Expected**
 - The pending row disappears from the table without a manual page refresh.
-- No `Invited · pending` badge remains for that address, and it does not come back after the reload
-  in step 5.
-- Step 4 shows `This invite link has expired` — the revoked link no longer works.
+- No `Invited · waiting to join` badge remains for that address, and it does not come back after the
+  reload in step 5.
+- Step 4 shows `This invite was cancelled` / `Ask {your name} if you still need access.` — the
+  revoked link no longer works.
 
 **Pass / Fail**
 - PASS if the row is removed, stays removed after a reload, and the link is dead.
@@ -698,3 +701,73 @@ project, so run TS-03 TC-037 before them.
   placeholder page was deleted.
 - A non-admin still gets the `Admin access needed` panel (TC-034) for these addresses — the admin
   guard is checked first.
+
+---
+
+### TC-951 · Send invite says what happened to the email
+
+| Field | Value |
+|---|---|
+| Suite | TS-02 Workspace Admin & Roles |
+| Type | Functional |
+| Priority | High |
+| Screen | `/admin/users` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Why this case exists.** The invite link only ever appeared in the server terminal and the admin
+was told nothing (Bugs S.No 192). Invites now go out through SendGrid. Bugs S.No 355.
+
+**Preconditions**
+- Signed in as P1 Owner-Admin. An inbox you own.
+
+**Steps**
+1. **SendGrid off** (`SENDGRID_API_KEY` empty, backend restarted): send an invite.
+2. **SendGrid on**: send an invite to your own inbox.
+3. **Failure**: change one character of `SENDGRID_API_KEY`, restart the backend, send an invite.
+   Then restore the key and restart.
+
+**Expected**
+- Step 1: blue `Invite created. The link is in the server terminal.`; the link is in
+  `docker compose logs backend`.
+- Step 2: green `Invite emailed to {address}`. The email `{your name} invited you to {workspace}`
+  arrives with a **Join the workspace** button and `This invite works until {date}.` — a date, no
+  `UTC`.
+- Step 3: red `The invite was saved but the email couldn't be sent. Try Resend in a few minutes.`
+  The invite **is** in the table. After restoring the key, **Resend** delivers it.
+
+**Pass / Fail**
+- **FAIL if a failed email loses the invite, or the screen claims an email was sent when it was
+  not.**
+
+**Notes**
+- Outlook may mark the email `Unverified` until edvensoft.com is authenticated in SendGrid (a
+  SendGrid setting, not the app).
+
+---
+
+### TC-952 · A second invite to someone already waiting is refused
+
+| Field | Value |
+|---|---|
+| Suite | TS-02 Workspace Admin & Roles |
+| Type | Negative |
+| Priority | Medium |
+| Screen | `/admin/users` |
+| Persona | P1 Owner-Admin |
+| Automation | Yes |
+
+**Why this case exists.** Two pending invites for one person were allowed; accepting the second then
+failed with a server error. Bugs S.No 365.
+
+**Steps**
+1. Invite `qa+a.twice@edvensoft.com`.
+2. Open **+ Invite** again and invite the same address (try `QA+A.Twice@edvensoft.com`).
+
+**Expected**
+- Step 2 stays in the drawer with, under `Work email`:
+  `qa+a.twice@edvensoft.com already has an invite waiting. Use Resend on their row instead.`
+- The table still holds one row for that address.
+
+**Pass / Fail**
+- **FAIL if a second pending row appears.**

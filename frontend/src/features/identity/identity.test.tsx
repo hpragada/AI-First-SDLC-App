@@ -59,7 +59,7 @@ describe("S-03 Accept invite", () => {
     expect(screen.getByText("Join Acme Corp")).toBeDefined();
 
     rerender(<AcceptInvite forceView="expired" />);
-    expect(screen.getByText("This invite link has expired")).toBeDefined();
+    expect(screen.getByText("This invite has expired")).toBeDefined();
 
     rerender(<AcceptInvite forceView="submitting" />);
     expect(screen.getByText(/Joining workspace/i)).toBeDefined();

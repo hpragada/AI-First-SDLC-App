@@ -33,6 +33,7 @@ import type {
   GateCriteria,
   Integration,
   Invitation,
+  InvitationSent,
   InvitationPreview,
   Lifecycle,
   LoginRequest,
@@ -417,9 +418,9 @@ export const api = {
     email: string;
     name?: string;
     grants?: { project_id: string; role: string }[];
-  }) => req<Invitation>("POST", "/invitations/", { body }),
+  }) => req<InvitationSent>("POST", "/invitations/", { body }),
   resendInvitation: (id: string) =>
-    req<Record<string, unknown>>("POST", `/invitations/${id}/resend/`),
+    req<InvitationSent>("POST", `/invitations/${id}/resend/`),
   revokeInvitation: (id: string) =>
     req<{ status: string }>("POST", `/invitations/${id}/revoke/`),
   createMembership: (projectId: string, body: { user_id: string; role: string }) =>

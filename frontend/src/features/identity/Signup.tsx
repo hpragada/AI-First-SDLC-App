@@ -12,7 +12,7 @@ import {
   Spinner,
   Strength,
 } from "../../components/ui";
-import { passwordStrength, useSignup } from "./hooks";
+import { passwordHelp, passwordStrength, useSignup } from "./hooks";
 
 const TAGLINE = "Run your whole software lifecycle with AI — and human approval gates.";
 const SUB = "Create a workspace and you become its first admin. Teammates join by invitation.";
@@ -42,7 +42,10 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
   // the exact field — and the form simply sat there, saying nothing, having done nothing.
   const nameError = fieldError(signup.error, "name");
   const emailError = fieldError(signup.error, "email");
-  const passwordError = fieldError(signup.error, "password");
+  // Mockups 4 + 5 (2026-10-09): an honest meter, and the server's refusal cleared on edit.
+  const help = passwordHelp(password);
+  const passwordError =
+    fieldError(signup.error, "password") ?? (help?.tooShort ? help.text : undefined);
   const orgError = fieldError(signup.error, "org_name");
   const bannerError = emailInUse
     ? undefined
@@ -129,13 +132,16 @@ export function Signup({ forceView }: { forceView?: SignupView }) {
         <Field
           label="Password"
           error={passwordError}
-          help={password && !passwordError ? "Strong — add a symbol to max it out." : undefined}
+          help={help && !passwordError ? help.text : undefined}
         >
           <Input
             type="password"
             placeholder="At least 8 characters"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              if (signup.error) signup.reset();
+              setPassword(e.target.value);
+            }}
             aria-invalid={Boolean(passwordError)}
           />
           <Strength value={passwordStrength(password)} />

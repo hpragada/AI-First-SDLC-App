@@ -33,6 +33,11 @@ class TenantSerializer(serializers.ModelSerializer):
 
 
 # ── Auth (P4.7-T1/T2 — server sessions, DECISION-3) ─────────────────
+# 2026-10-09 (team-approved mockup 5): DRF's own "Ensure this field has at least 8 characters."
+# reached the screen. A person reads the rule, not the field.
+PASSWORD_WORDS = {"min_length": "Use at least 8 characters.", "blank": "Enter a password."}
+
+
 class LoginSerializer(serializers.Serializer):
     """Input for POST /api/auth/login."""
 
@@ -48,7 +53,8 @@ class SignupSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     email = serializers.EmailField()
     password = serializers.CharField(
-        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8,
+        error_messages=PASSWORD_WORDS,
     )
     org_name = serializers.CharField(max_length=255)
 
@@ -72,10 +78,14 @@ class InvitationCreateSerializer(serializers.Serializer):
 class InvitationSerializer(serializers.ModelSerializer):
     """Read shape for an invitation (never exposes the token/hash)."""
 
+    # 2026-10-09: when the invite was last sent. A pending invite is only ever written by its
+    # creation and by Resend, so its last write IS its last send.
+    sent_at = serializers.DateTimeField(source="updated_at", read_only=True)
+
     class Meta:
         model = Invitation
         fields = ["id", "email", "name", "status", "grants", "expires_at",
-                  "accepted_at", "created_at"]
+                  "accepted_at", "created_at", "sent_at"]
         read_only_fields = fields
 
 
@@ -84,7 +94,8 @@ class AcceptInvitationSerializer(serializers.Serializer):
 
     token = serializers.CharField()
     password = serializers.CharField(
-        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8,
+        error_messages=PASSWORD_WORDS,
     )
     name = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
@@ -100,7 +111,8 @@ class ResetSerializer(serializers.Serializer):
 
     token = serializers.CharField()
     password = serializers.CharField(
-        style={"input_type": "password"}, trim_whitespace=False, min_length=8
+        style={"input_type": "password"}, trim_whitespace=False, min_length=8,
+        error_messages=PASSWORD_WORDS,
     )
 
 

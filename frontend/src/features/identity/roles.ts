@@ -35,3 +35,27 @@ export function roleLabel(key: string): string {
       .join(" ")
   );
 }
+
+/** "A", "A and B", "A, B and C". */
+export function andList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** Every role an invite grants, in the order the admin added them (team-approved 2026-10-09):
+ *  "as Engineer and Architect on PeopleDesk", or with several projects
+ *  "as Engineer on PeopleDesk and as Designer on Payroll". The email says the same thing
+ *  (backend `apps/tenancy/emails.py`). */
+export function grantsPhrase(grants: { project_name: string; role_label: string }[]): string {
+  const byProject = new Map<string, string[]>();
+  for (const g of grants) {
+    const roles = byProject.get(g.project_name) ?? [];
+    if (!roles.includes(g.role_label)) roles.push(g.role_label);
+    byProject.set(g.project_name, roles);
+  }
+  return andList(
+    [...byProject].map(([project, roles]) =>
+      project ? `as ${andList(roles)} on ${project}` : `as ${andList(roles)}`,
+    ),
+  );
+}

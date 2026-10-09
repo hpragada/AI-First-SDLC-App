@@ -11,6 +11,13 @@ import { clarificationLink, gateLink } from "../../links";
 // S-31 view states: busy (default) · calm · new-project.
 export type DashboardView = "busy" | "calm" | "new-project";
 
+/** "Good morning" before 12, "Good afternoon" until 5 PM, "Good evening" after — by the viewer's
+ *  own clock (team-approved 2026-10-09; it said "Good morning" at every hour). */
+export function greeting(now: Date = new Date()): string {
+  const h = now.getHours();
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
+
 export function Dashboard({ forceView }: { forceView?: DashboardView }) {
   if (forceView) return <DashboardGallery view={forceView} />;
   return <DashboardLive />;
@@ -111,7 +118,7 @@ function DashboardLive() {
       <div className="page-head">
         <div className="page-head__titles">
           <h1 className="t-h1">
-            {needsCount > 0 ? "Good morning — here's what needs you" : "Good morning"}
+            {needsCount > 0 ? `${greeting()} — here's what needs you` : greeting()}
           </h1>
           <p className="page-head__sub">
             {selectedProject?.project_name} · your runs, gates, and questions in one place.
@@ -267,7 +274,7 @@ function DashboardGallery({ view }: { view: DashboardView }) {
         <div className="page-head">
           <div className="page-head__titles">
             <h1 className="t-h1">
-              {view === "busy" ? "Good morning — here's what needs you" : "Good morning"}
+              {view === "busy" ? `${greeting()} — here's what needs you` : greeting()}
             </h1>
             <p className="page-head__sub">
               Payment Gateway v2 · your runs, gates, and questions in one place.
