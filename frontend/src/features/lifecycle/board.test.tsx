@@ -597,3 +597,20 @@ describe("Escape inside the create drawer", () => {
     await waitFor(() => expect(screen.queryByLabelText(/Title/)).toBeNull());
   });
 });
+
+
+// ── Recon 2026-10-10, mockup M9 — one status everywhere ────────────────────────────────────
+//
+// A new accessibility defect is stored "in progress" (nothing has run on it yet). The Board read
+// "Not started", the List read "In progress" and the defect page said "In progress" — one item,
+// two statuses. Every screen now takes the Board's word.
+describe("a work item's status reads the same on every screen", () => {
+  it("an untouched defect is 'Not started', whatever its stored state says", async () => {
+    const { boardStatusLabel } = await import("./WorkItemsBoard");
+    expect(boardStatusLabel(card({ type: "defect", state: "in_progress" }) as never))
+      .toBe("Not started");
+    expect(boardStatusLabel(card({ state: "cancelled" }) as never)).toBe("Cancelled");
+    expect(boardStatusLabel(card({ current_phase: "01_ideation", run_status: "running" }) as never))
+      .toBe("Running");
+  });
+});

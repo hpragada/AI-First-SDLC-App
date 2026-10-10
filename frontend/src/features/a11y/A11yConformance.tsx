@@ -16,6 +16,7 @@ import { useState } from "react";
 
 import { Link } from "react-router-dom";
 
+import { api, saveBlob } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import {
   Badge,
@@ -35,6 +36,7 @@ import {
 import { roleLabel } from "../identity/roles";
 import type { A11yConformance, A11yConformanceLevel, A11yConformanceRow } from "../../types";
 import { A11yTabs } from "./A11yTabs";
+import { a11yWhen } from "./dates";
 import { LoadFailed } from "./LoadFailed";
 import {
   useA11yConformance,
@@ -172,6 +174,13 @@ function Criteria({
             <EstablishedBy engines={row.established_by} />,
             <span className={row.routes_checked || row.open_failures ? undefined : "u-muted"}>
               {row.evidence}
+              {/* Why no level is suggested (recon 2026-10-10, finding 7). "Needs your decision"
+                  with no reason told the reviewer nothing they could act on. */}
+              {row.why && (
+                <span className="t-xs u-muted" style={{ display: "block" }}>
+                  {row.why}
+                </span>
+              )}
             </span>,
           ],
         }))}
@@ -193,6 +202,30 @@ function Signing({
   const [name, setName] = useState(defaultName);
   const [readIt, setReadIt] = useState(false);
   const [knowsGaps, setKnowsGaps] = useState(false);
+
+  // Nothing has looked at anything: there is nothing to sign (mockup M7). Refused on the server
+  // as well, so this is the screen saying so rather than the only thing stopping it.
+  if (!data.has_evidence) {
+    return (
+      <div className="card--attention gate-panel">
+        <div className="card__body">
+          <span className="gate-panel__role">
+            ▲ Conformance statement · required role: {roleLabel(data.required_role)}
+          </span>
+          <h3 className="t-h3">Run an audit first</h3>
+          <p className="t-sm">
+            Nothing has been checked yet, so there is nothing to sign. Run an audit from Pages
+            &amp; audit, then come back to sign.
+          </p>
+          <div className="gate-panel__actions">
+            <Link to="/a11y/pages" className="btn btn--secondary">
+              Go to Pages &amp; audit
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card--attention gate-panel">
@@ -226,36 +259,33 @@ function Signing({
         <div className="gate-panel__actions">
           <Button
             variant="primary"
-            disabled={!readIt || !knowsGaps || !name.trim() || sign.isPending}
+            disabled={
+              !readIt || !knowsGaps || !name.trim() || sign.isPending || data.audit_in_progress
+            }
             onClick={() => sign.mutate({ name, acknowledged: readIt && knowsGaps })}
           >
             {sign.isPending ? "Signing…" : "Sign"}
           </Button>
         </div>
+        {/* Mockup M2: the numbers are still coming in, so the signature waits for them. */}
+        {data.audit_in_progress && (
+          <span className="t-sm u-muted">Sign opens when the audit finishes.</span>
+        )}
         {sign.isError && (
           <Banner variant="danger" title="This was not signed">
             {writeErrorSentence(sign.error)}
           </Banner>
         )}
         <span className="gate-reassure">
-          Signing records your name, your role and the exact wording. It does not publish
-          anything — export is a separate step.
+          Signing records your name, your role and the exact wording, and publishes the
+          accessibility report and baseline it rests on. The statement itself is published when
+          you export it.
         </span>
       </div>
     </div>
   );
 }
 
-function basisWhen(value: string | null | undefined): string {
-  if (!value) return "";
-  return new Date(value).toLocaleString(undefined, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 // Which accessibility checks this statement was compiled from, and when the most recent of them
 // ran. A signed statement that cannot say what produced it is one nobody can check a year later.
@@ -273,10 +303,14 @@ function Basis({ data }: { data: A11yConformance }) {
   return (
     <div className="meta-row" style={{ marginBottom: "var(--space-4)" }}>
       <span className="meta-item">
-        Compiled from <strong>{latest.label}</strong>
+        {/* By when it ran, in the reader's own clock — never by its id (mockup M4). */}
+        Compiled from{" "}
+        <strong>
+          {latest.started_at ? `the audit of ${a11yWhen(latest.started_at)}` : latest.label}
+        </strong>
       </span>
       <span className="meta-item">
-        Finished <strong>{basisWhen(latest.finished_at)}</strong>
+        Finished <strong>{a11yWhen(latest.finished_at)}</strong>
       </span>
       <span className="meta-item">
         Pages{" "}
@@ -356,6 +390,26 @@ function Draft({ data, projectId }: { data: A11yConformance; projectId: string }
 
 function ExportPanel({ data, projectId }: { data: A11yConformance; projectId: string }) {
   const doExport = useExportA11yConformance(projectId);
+  const { currentUser } = useAuth();
+  const [downloadError, setDownloadError] = useState<unknown>(null);
+  // Export = mark the signed statement Published, then hand over exactly the signed wording as a
+  // file. It used to ask the server "may I?" and drop the answer, so "Preparing…" flashed and
+  // nothing followed (recon 2026-10-10, item 3).
+  async function runExport() {
+    setDownloadError(null);
+    const out = await doExport.mutateAsync().catch(() => null);
+    if (!out?.artifact_id) return;
+    try {
+      const { blob, filename } = await api.downloadArtifact(
+        currentUser?.tenant.id ?? "",
+        out.artifact_id,
+        "Accessibility conformance statement",
+      );
+      saveBlob(blob, filename);
+    } catch (e) {
+      setDownloadError(e);
+    }
+  }
   if (!data.can_export) {
     return (
       <Panel title="Export">
@@ -379,21 +433,36 @@ function ExportPanel({ data, projectId }: { data: A11yConformance; projectId: st
         The statement is locked to the wording that was signed. Editing it again clears the
         signature.
       </Banner>
+      {data.exported_at && (
+        <Banner variant="success" title={`Exported ${a11yWhen(data.exported_at)}`}>
+          The file is in your downloads.
+        </Banner>
+      )}
+      {doExport.isError && (
+        <Banner variant="danger" title="This was not exported">
+          {writeErrorSentence(doExport.error)}
+        </Banner>
+      )}
+      {downloadError != null && (
+        <Banner variant="danger" title="The statement was published, but the file didn't download">
+          {writeErrorSentence(downloadError, "Try Export again.")}
+        </Banner>
+      )}
       <div className="gate-panel__actions">
-        <Button variant="primary" onClick={() => doExport.mutate()} disabled={doExport.isPending}>
-          {doExport.isPending ? "Preparing…" : "Export…"}
+        <Button variant="primary" onClick={runExport} disabled={doExport.isPending}>
+          {doExport.isPending ? "Exporting…" : data.exported_at ? "Export again" : "Export"}
         </Button>
         {data.artifact_id && (
-          <Link className="btn btn--ghost" to={`/artifacts/${data.artifact_id}/publish`}>
-            Open publish gate ↗
+          <Link className="btn btn--ghost" to={`/artifacts/${data.artifact_id}`}>
+            View statement
           </Link>
         )}
       </div>
-      <p className="t-xs u-muted" style={{ marginTop: "var(--space-4)" }}>
-        The engine, prompt version and scanner version that produced these results are recorded
-        on the export so the statement can be re-examined later against exactly what produced it.
-        They are deliberately not shown here.
-      </p>
+      {!data.exported_at && (
+        <p className="t-xs u-muted" style={{ marginTop: "var(--space-4)" }}>
+          Export downloads the signed statement and marks it Published.
+        </p>
+      )}
     </Panel>
   );
 }
@@ -488,6 +557,15 @@ export function A11yConformanceScreen() {
           and the stylesheet's `margin-top` was inert, because top margins do nothing on an
           inline box. Every other screen used the shared component and stacked correctly, which
           is why this was the only tab that looked wrong. Use the component; do not restyle. */}
+      {/* Mockup M2: pages are recorded as they arrive, so mid-audit numbers are partial. */}
+      {data.audit_in_progress && (
+        <div style={{ marginTop: "var(--space-4)" }}>
+          <Banner variant="warning" title="An audit is running — these numbers are still coming in">
+            Signing opens once the audit finishes.
+          </Banner>
+        </div>
+      )}
+
       <div className="grid grid--3" style={{ marginTop: "var(--space-5)" }}>
         {/* "of 55" on the first two and not the third, deliberately: those two partition the
             whole standard and sum to it, and the third is a SUBSET OF THE SECOND — a criterion
@@ -495,12 +573,12 @@ export function A11yConformanceScreen() {
             evaluated". Printing "4 of 55" would invite the reader to add it to the other two. */}
         <Tile
           num={<>{data.totals.evaluated} <span className="tile__of">of {data.totals.total}</span></>}
-          label="Checked"
+          label={data.audit_in_progress ? "Checked so far" : "Checked"}
           sub="A check examined these and recorded what it found"
         />
         <Tile
           num={<>{data.totals.not_evaluated} <span className="tile__of">of {data.totals.total}</span></>}
-          label="Not checked yet"
+          label="Not settled yet"
           sub="Recorded as unknown — never assumed to pass"
         />
         {/* **Criteria the platform will not put a word in your mouth about** — it has no
@@ -516,11 +594,12 @@ export function A11yConformanceScreen() {
             caption was. */}
         <div className="tile tile--attention">
           <div className="tile__num">{data.totals.awaiting_a_person}</div>
-          <div className="tile__label">Waiting on you</div>
-          {/* Says which of the other two numbers it comes out of, because it is not a third
-              bucket and the screen used to leave that ambiguous. */}
+          {/* Mockup M1: "Waiting on you" sat beside the audit panel's "Waiting on a person" and
+              they counted different things — criteria here, elements there. Named for what it
+              counts. Still a subset of the "Not settled yet" tile, which the sub-line says. */}
+          <div className="tile__label">Criteria to decide</div>
           <div className="tile__sub">
-            Of the {data.totals.not_evaluated} — marked in the list below for you to set
+            Of the {data.totals.not_evaluated} — choose a level for these below
           </div>
         </div>
       </div>

@@ -458,6 +458,23 @@ def test_the_title_describes_the_element_instead_of_pasting_the_selector(world):
     assert "#loans-table > tbody > tr:nth-of-type(2)" in defect.description
 
 
+def test_a_title_names_the_page_by_its_name_when_it_has_one(world):
+    """Recon 2026-10-10, finding 4: "on /checkout" is an address. A page listed with a name is
+    called by it; the address stays on the ticket as Screen."""
+    from apps.a11y.routes import register_routes
+
+    register_routes(tenant_id=world["t"], project_id=world["p"],
+                    routes=[{"path": "/checkout", "label": "Checkout"}])
+    run = _run(world)
+    _record(world, run, [_row()])
+    _reconcile(world, run)
+
+    defect = _a11y_defects(world)[0]
+    assert " on the Checkout page — " in defect.title
+    assert "/checkout" not in defect.title
+    assert "/checkout" in defect.description
+
+
 def test_a_title_still_says_which_page_and_which_rule_without_the_standard_loaded(world):
     # A project whose WCAG set has not been loaded still gets tickets. Losing the rule's NAME is
     # a small cost; failing to open a defect because a lookup table is missing would be absurd.
@@ -472,8 +489,11 @@ def test_a_title_still_says_which_page_and_which_rule_without_the_standard_loade
 
 
 @pytest.mark.parametrize("selector,expected", [
-    # An id is the name its own developer chose: short, precise, and a downgrade to describe.
-    ("#photo-interior", "#photo-interior"),
+    # An id is the name its own developer chose — quoted in words, never shown as CSS (recon
+    # 2026-10-10, finding 4). A landmark id is the region it names.
+    ("#photo-interior", 'the "photo-interior" element'),
+    ("main#main", "main content"),
+    ("#save-entry", 'the "save-entry" element'),
     ("#loans-table > tbody > tr:nth-of-type(2)", "row 2 in the loans table"),
     ("form#signup > input.email", "field in the signup"),
     # A named thing beats a region — "in the loans table" says more than "in the main content".
@@ -533,3 +553,52 @@ def test_the_position_is_kept_even_when_the_element_has_none_of_its_own(world):
     assert len(titles) == 3
     assert len(set(titles)) == 3, titles
     assert all("(group " in t for t in titles), titles
+
+
+def test_migration_0032_retitles_what_is_already_on_the_board_and_nothing_edited(world):
+    """The titles already on people's screens get the new wording; a title a person edited is
+    left exactly as it is (recon 2026-10-10, findings 4 and 5)."""
+    import importlib
+    from types import SimpleNamespace
+
+    from django.db import connection
+
+    from apps.a11y.models import A11yBaselineAudit, A11yRoute
+    from apps.registry.models import Artifact
+
+    A11yRoute.objects.create(tenant=world["tenant"], project=world["project"],
+                             path="/staff/catalogue-entry", label="Catalogue entry")
+
+    def defect(title, selector="main#main"):
+        return WorkItem.objects.create(
+            tenant=world["tenant"], project=world["project"], type=WorkItem.Type.DEFECT,
+            title=title, external_ref={"kind": "a11y", "route": "/staff/catalogue-entry",
+                                       "selector": selector})
+    generated = defect("Accessibility: Reflow (1.4.10) on /staff/catalogue-entry — #main")
+    button = defect("Accessibility: Info and Relationships (1.3.1) on /staff/catalogue-entry — "
+                    "#save-entry", selector="#save-entry")
+    edited = defect("Reflow on catalogue — fix before release")
+
+    audit = A11yBaselineAudit.objects.create(tenant=world["tenant"], project=world["project"],
+                                             base_url="http://localhost:4180", routes=["/"])
+    old = f"Accessibility judging — baseline audit {str(audit.id)[:8]}"
+    task = WorkItem.objects.create(tenant=world["tenant"], project=world["project"], title=old)
+    doc = Artifact.objects.create(tenant=world["tenant"], project=world["project"],
+                                  phase="a11y_judge", type="a11y_judge", sor="internal",
+                                  title=old)
+
+    module = importlib.import_module("apps.a11y.migrations.0032_titles_in_words")
+    with connection.cursor() as cur:
+        # The rows above sit in this test's open transaction with deferred FK checks pending,
+        # which a real migration never has; settle them so the migration's ALTER can run.
+        cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    module._retitle(None, SimpleNamespace(connection=connection))
+
+    for row in (generated, button, edited, task, doc):
+        row.refresh_from_db()
+    assert generated.title == ("Accessibility: Reflow (1.4.10) on the Catalogue entry page — "
+                               "main content")
+    assert button.title.endswith('on the Catalogue entry page — the "save-entry" element')
+    assert edited.title == "Reflow on catalogue — fix before release"
+    day = f"{audit.created_at.day} {audit.created_at:%b %Y}"
+    assert task.title == doc.title == f"Accessibility judging — audit of {day}"

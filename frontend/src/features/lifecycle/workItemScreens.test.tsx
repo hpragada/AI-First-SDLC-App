@@ -127,6 +127,7 @@ import { Route, Routes } from "react-router-dom";
 import { waitFor } from "@testing-library/react";
 
 import { WorkItemDefect } from "./WorkItemDefect";
+import { boardStatusLabel } from "./WorkItemsBoard";
 import { WorkItemEpic } from "./WorkItemEpic";
 import { WorkItemTask } from "./WorkItemTask";
 
@@ -201,7 +202,8 @@ describe("a defect states its own condition once", () => {
     await waitFor(() => expect(screen.getByText("Export to CSV")).toBeDefined());
     // "Open" above and "Proposed" beside it — one defect, two words — was the defect.
     expect(container.textContent).not.toContain("Open defect");
-    expect(container.textContent).toContain("Proposed");
+    // Mockup M9: the State row says what the Board and the List say for this same item.
+    expect(container.textContent).toContain(`State${boardStatusLabel(item({ type: "defect" }))}`);
   });
 
   it("reports the run in the header when there is one to report", async () => {

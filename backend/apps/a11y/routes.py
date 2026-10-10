@@ -262,12 +262,14 @@ def register_routes(*, tenant_id, project_id, routes, source: str = "manual",
 def describe_routes(tenant_id, project_id) -> str:
     """The route list in one line, for a console or an audit's summary."""
     rows = registered_routes(tenant_id, project_id, enabled_only=False)
+    # In the screen's own words (mockup M8): "pages listed", not "route(s) registered" — and
+    # "excluded", the word the page list's own filter uses for a page taken out of scope.
     if not rows:
-        return "no routes are registered for this project"
+        return "No pages are listed for this project"
     enabled = [row for row in rows if row.enabled]
-    line = f"{len(enabled)} route(s) registered for audit"
+    line = f"{len(enabled)} page{'s' if len(enabled) != 1 else ''} listed"
     off = len(rows) - len(enabled)
-    return f"{line}, {off} disabled" if off else line
+    return f"{line}, {off} excluded" if off else line
 
 
 def _record_change(*, tenant_id, project_id, actor, source, changed: dict) -> None:

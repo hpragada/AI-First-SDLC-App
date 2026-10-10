@@ -1080,19 +1080,18 @@ class ProjectViewSet(
         knows only that an artifact is approved, and the sentence a refused reviewer needs to
         read is about a signature, not a status.
         """
-        from apps.a11y.conformance import ConformanceError, check_export, state
+        from apps.a11y.conformance import ConformanceError, export_statement
 
         project = self.get_object()
         try:
-            check_export(tenant_id=self.tenant_id, project_id=str(project.id))
+            payload = export_statement(
+                tenant_id=self.tenant_id, project_id=str(project.id), user_id=request.user.id)
         except ConformanceError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        payload = state(tenant_id=self.tenant_id, project_id=str(project.id))
+        # The screen downloads the signed wording from this artifact right after.
         return Response({
             "artifact_id": payload["artifact_id"],
-            # The export itself goes through the ordinary artifact publish flow, which is where
-            # the project's export policy lives (#5/#9). This endpoint's job is the signature.
-            "publish_via": f"/api/artifacts/{payload['artifact_id']}/publish/",
+            "exported_at": payload["exported_at"],
             "signed_by": payload["signed_name"],
             "signed_at": payload["signed_at"],
         })

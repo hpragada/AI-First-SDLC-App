@@ -1105,6 +1105,7 @@ _EVENT_SCOPE: dict[str, tuple[str, str, str | None]] = {
     "code_intel_job": ("runs.CodeIntelJob", "project_id", None),
     "a11y_finding": ("a11y.A11yFinding", "project_id", None),
     "a11y_conformance": ("a11y.A11yConformanceStatement", "project_id", None),
+    "a11y_audit": ("a11y.A11yBaselineAudit", "project_id", None),
 }
 
 

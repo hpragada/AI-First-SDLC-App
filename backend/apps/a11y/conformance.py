@@ -285,6 +285,45 @@ def suggest(cover: dict | None, failures: int, *, owner: str | None = None,
     return NOT_APPLICABLE
 
 
+#: Who looked, in the words the screen's badges already use.
+_ENGINE_WORDS = {"rule": "the automatic rule", "AI": "the AI check",
+                 "agentic": "the keyboard walk", "human": "a person"}
+
+
+def _checks_words(engines) -> str:
+    """"this rule" / "the AI check" / "these checks" — whoever actually looked (finding 7)."""
+    looked = [e for e in (engines or ()) if e != "human"]
+    if looked == ["rule"]:
+        return "this rule"
+    if len(looked) == 1:
+        return _ENGINE_WORDS.get(looked[0], "this check")
+    return "these checks"
+
+
+def why_undecided(cover: dict | None, *, owner: str | None = None, always_human: bool = False,
+                  held_back: bool = False) -> str:
+    """Why the platform suggests no level for this row — one line a reviewer can act on.
+
+    Recon 2026-10-10, finding 7: a row said "needs your decision" and never why. The reasons are
+    `suggest`'s own guards, in its own order, so the sentence cannot disagree with the decision.
+    """
+    routes = (cover or {}).get("routes") or {}
+    outcomes = set(routes.values())
+    engines = sorted(e for e in ((cover or {}).get("engines") or ()) if e != "human")
+    if "not_checked" in outcomes:
+        return "A page is still waiting to be checked. Finish the audit, or choose a level."
+    if "needs_human" in outcomes:
+        return "A check looked at this and couldn't decide. Choose a level."
+    if held_back:
+        return ("Part of the checking for this criterion is paused, so no level is suggested. "
+                "Choose one.")
+    if always_human:
+        return "Only a person can judge this criterion — no check can observe it. Choose a level."
+    who = " and ".join(_ENGINE_WORDS.get(e, e) for e in engines) or "a check"
+    return (f"{who[:1].upper()}{who[1:]} looked, but can't settle this criterion on its own. "
+            f"Choose a level.")
+
+
 def _evidence_sentence(cover: dict | None, failures: int, adjudicated: int) -> str:
     """What actually happened, in words, with no verdict in it.
 
@@ -318,7 +357,8 @@ def _evidence_sentence(cover: dict | None, failures: int, adjudicated: int) -> s
         parts.append(f"checked on {counts['passed']} pages with nothing wrong")
     if counts.get("not_applicable"):
         parts.append(
-            f"{counts['not_applicable']} pages had nothing for this rule to apply to"
+            f"{counts['not_applicable']} pages had nothing for "
+            f"{_checks_words((cover or {}).get('engines'))} to apply to"
         )
     if adjudicated:
         parts.append(f"{adjudicated} reviewed by a person")
@@ -360,6 +400,7 @@ def criterion_rows(tenant_id, project_id, *, verdicts: dict | None = None) -> li
         suggested = suggest(cov, open_count, owner=owner, always_human=always_human,
                             held_back=number in A11Y_HELD_BACK_CLAIMS)
         chosen = (verdicts.get(number) or {}).get("level")
+        undecided = chosen not in LEVELS and suggested is None
         rows.append({
             "criterion": number,
             "handle": crit["handle"],
@@ -376,7 +417,10 @@ def criterion_rows(tenant_id, project_id, *, verdicts: dict | None = None) -> li
             "effective": (chosen if chosen in LEVELS else None) or suggested or NOT_EVALUATED,
             # True when the platform has no suggestion and the reviewer has not ruled: the row
             # is unfinished, and the signing step counts these out loud.
-            "needs_a_person": chosen not in LEVELS and suggested is None,
+            "needs_a_person": undecided,
+            # Why, when a person is needed (finding 7). Empty otherwise.
+            "why": why_undecided(cov, owner=owner, always_human=always_human,
+                                 held_back=number in A11Y_HELD_BACK_CLAIMS) if undecided else "",
         })
     return rows
 
@@ -389,8 +433,12 @@ def totals(rows: list[dict]) -> dict:
     out["total"] = len(rows)
     out["evaluated"] = len(rows) - out[NOT_EVALUATED]
     out["awaiting_a_person"] = sum(1 for row in rows if row["needs_a_person"])
+    # Levels the EVIDENCE suggested and the reviewer kept. "Not evaluated" is not a suggestion
+    # — nothing looked — and counting it told a signer that 50 levels came from evidence when
+    # 36 of them came from nothing at all (recon 2026-10-10, finding 8).
     out["platform_suggested"] = sum(
-        1 for row in rows if row["verdict"] is None and row["suggested"] is not None
+        1 for row in rows if row["verdict"] is None
+        and row["suggested"] not in (None, NOT_EVALUATED)
     )
     return out
 
@@ -445,6 +493,7 @@ def evidence_basis(tenant_id, project_id) -> dict:
     away has its partial capture kept and its baseline deliberately not written — so listing it
     as a basis would credit this statement with coverage it never had.
     """
+    from .baseline import audit_label
     from .models import A11yBaselineAudit, A11yFinding
 
     complete = A11yBaselineAudit.Status.COMPLETE
@@ -468,7 +517,10 @@ def evidence_basis(tenant_id, project_id) -> dict:
     return {
         "latest": None if latest is None else {
             "id": str(latest.id),
-            "label": f"audit {str(latest.id)[:8]}",
+            # A name, not an id (recon 2026-10-10, finding 5). `started_at` rides along so the
+            # screen can add the time of day in the reader's own clock.
+            "label": audit_label(latest),
+            "started_at": latest.created_at,
             "finished_at": latest.updated_at,
             "asked": int((latest.summary or {}).get("asked") or len(latest.routes or [])),
             "opened": int((latest.summary or {}).get("opened") or 0),
@@ -502,10 +554,14 @@ def _basis_lines(basis: dict | None) -> list[str]:
     if latest is not None:
         when = latest["finished_at"]
         stamp = when.strftime("%d %B %Y at %H:%M UTC") if when else "an unrecorded time"
+        started = latest.get("started_at")
+        began = started.strftime("%d %B %Y at %H:%M UTC") if started else "an unrecorded time"
+        # No id in the wording (recon 2026-10-10, finding 5): this document is read — and signed —
+        # by people. The id is kept with the signature's provenance, which is never displayed.
         lines.append(
-            f"The most recent accessibility audit of this application was **{latest['label']}** "
-            f"(`{latest['id']}`), which asked for {latest['asked']} page(s), opened "
-            f"{latest['opened']}, and finished on {stamp}."
+            f"The most recent accessibility audit of this application started on {began}, "
+            f"asked for {latest['asked']} page(s), opened {latest['opened']}, and finished on "
+            f"{stamp}."
         )
         others = int(basis.get("audits") or 0) - 1
         if others > 0:
@@ -659,6 +715,10 @@ def state(*, tenant_id, project_id) -> dict:
         "basis": basis,
         "rows": rows,
         "totals": totals(rows),
+        # An audit is still running, so the numbers above are still coming in (finding 3).
+        "audit_in_progress": audit_in_progress(tenant_id, project_id),
+        # Nothing has looked at anything yet: the signing panel says "Run an audit first".
+        "has_evidence": has_evidence(rows),
         "disclaimer": DISCLAIMER,
         "signed": bool(row.signed_at),
         "signed_name": row.signed_name,
@@ -668,8 +728,29 @@ def state(*, tenant_id, project_id) -> dict:
         "artifact_id": str(row.artifact_id) if row.artifact_id else None,
         "required_role": ACCESSIBILITY_REVIEWER_ROLE,
         "can_export": bool(row.signed_at) and not stale,
+        # When the signed statement was last exported — the Export box says so after the click.
+        "exported_at": _exported_at(row),
         "export_refused_because": _refusal(row, stale),
     }
+
+
+def has_evidence(rows: list[dict]) -> bool:
+    """Did anything look at anything? False when no check has run on a single page and nothing
+    is open — the state in which there is nothing to sign (recon 2026-10-10, finding 8)."""
+    # A reviewer's own level counts: a person who assessed a criterion themselves has evidence.
+    return any(row["routes_checked"] or row["open_failures"] or row["verdict"] for row in rows)
+
+
+def audit_in_progress(tenant_id, project_id) -> bool:
+    """Is an audit on this project still running? Its pages are recorded as they arrive, so
+    the statement's numbers are partial until it ends (recon 2026-10-10, finding 3)."""
+    from .baseline import IN_FLIGHT_STATUSES
+    from .models import A11yBaselineAudit
+
+    with tenant_context(tenant_id):
+        return A11yBaselineAudit.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, status__in=IN_FLIGHT_STATUSES,
+        ).exists()
 
 
 def _refusal(row, stale: bool) -> str:
@@ -761,11 +842,22 @@ def sign(*, tenant_id, project_id, user_id, name: str, acknowledged: bool = Fals
             "many criteria were not evaluated. Signing is the whole point of this document."
         )
 
+    # Refused on the server, not only hidden on the screen (findings 3 and 8): a statement signed
+    # over half an audit, or over no evidence at all, is the claim this document exists to stop.
+    if audit_in_progress(tenant_id, project_id):
+        raise ConformanceError(
+            "An audit is still running, so these numbers are still coming in. Sign once it "
+            "finishes."
+        )
     row = _statement(tenant_id, project_id)
     rows = criterion_rows(tenant_id, project_id, verdicts=row.verdicts or {})
+    counts = totals(rows)
+    if not has_evidence(rows):
+        raise ConformanceError(
+            "Nothing has been checked yet, so there is nothing to sign. Run an audit first."
+        )
     body = row.body or draft_body(
         scope=row.scope, rows=rows, basis=evidence_basis(tenant_id, project_id))
-    counts = totals(rows)
 
     with tenant_context(tenant_id):
         row.body = body
@@ -785,6 +877,7 @@ def sign(*, tenant_id, project_id, user_id, name: str, acknowledged: bool = Fals
         # approval — which is what non-negotiable #5 is actually for.
         artifact.status = Artifact.Status.APPROVED
         artifact.save(update_fields=["status", "updated_at"])
+    published = publish_evidence(tenant_id, project_id)
 
     _event(tenant_id, "a11y.conformance.signed", row, user_id, {
         "name": row.signed_name,
@@ -793,11 +886,44 @@ def sign(*, tenant_id, project_id, user_id, name: str, acknowledged: bool = Fals
         "evidence_hash": row.signed_evidence_hash,
         "not_evaluated": counts[NOT_EVALUATED],
         "platform_suggested_unchanged": counts["platform_suggested"],
+        "evidence_published": published,
+        # Which audit the wording rests on. The wording names it by when it ran (recon
+        # 2026-10-10, finding 5); this is what still ties the signature to exactly that audit.
+        "audit_id": ((evidence_basis(tenant_id, project_id).get("latest") or {}).get("id")),
         # Recorded here and NEVER displayed (D-A11Y-96) — without it a signed statement can
         # never be traced back to what produced it (AC2).
         "provenance": provenance(tenant_id, project_id),
     })
     return state(tenant_id=tenant_id, project_id=project_id)
+
+
+def publish_evidence(tenant_id, project_id) -> list[str]:
+    """Publish the audit documents a signature stands on. Returns the ids it published.
+
+    Team decision 2026-10-10: the Accessibility report and baseline stay **Draft** until the
+    conformance statement is signed, and signing publishes them — the signature is the named
+    human approval they were waiting for (non-negotiable #5). Inside the platform only: the
+    statement itself keeps its own path (Approved here, Published when exported).
+
+    **Audit documents only** (`run` is null). A report filed against a development run belongs
+    to that run's own gate, and a signature on a statement is not a decision about it.
+    Drafts only, so nothing already published, approved or superseded moves.
+    """
+    from mcp_platform_state import tools
+
+    from apps.registry.models import Artifact
+
+    from .baseline_report import BASELINE_TYPE
+    from .report import REPORT_TYPE
+
+    with tenant_context(tenant_id):
+        ids = [str(i) for i in Artifact.objects.filter(
+            tenant_id=tenant_id, project_id=project_id, run__isnull=True,
+            type__in=(REPORT_TYPE, BASELINE_TYPE), status=Artifact.Status.DRAFT,
+        ).values_list("id", flat=True)]
+        for artifact_id in ids:
+            tools.update_artifact(tenant_id, artifact_id, status=Artifact.Status.PUBLISHED)
+    return ids
 
 
 def _publish_artifact(tenant_id, project_id, row, body: str):
@@ -850,6 +976,38 @@ def check_export(*, tenant_id, project_id) -> None:
         )
     if is_stale(row, evidence_hash=evidence_fingerprint(tenant_id, project_id)):
         raise ConformanceError(_refusal(row, True))
+
+
+def _exported_at(row):
+    artifact = row.artifact if row.artifact_id else None
+    if artifact is None or artifact.status != "published":
+        return None
+    return artifact.published_at
+
+
+def export_statement(*, tenant_id, project_id, user_id) -> dict:
+    """Export the signed statement: mark it Published inside the platform and record it.
+
+    The person gets the file itself from the screen, which downloads exactly the signed wording.
+    Deliberately NOT the generic publish-to-a-system-of-record path: the statement is filed
+    under Testing, and Testing documents go to test management, which would turn a signed
+    statement into test cases (recon 2026-10-10, item 3).
+    """
+    from apps.registry.models import Artifact
+
+    check_export(tenant_id=tenant_id, project_id=project_id)
+    row = _statement(tenant_id, project_id, create=False)
+    with tenant_context(tenant_id):
+        artifact = Artifact.objects.get(id=row.artifact_id, tenant_id=tenant_id)
+        if artifact.published_at is None:
+            artifact.published_at = timezone.now()
+        artifact.status = Artifact.Status.PUBLISHED
+        artifact.save(update_fields=["status", "published_at", "updated_at"])
+    _event(tenant_id, "a11y.conformance.exported", row, user_id, {
+        "artifact_id": str(artifact.id),
+        "body_hash": row.signed_body_hash,
+    })
+    return state(tenant_id=tenant_id, project_id=project_id)
 
 
 def _event(tenant_id, action: str, row, user_id, payload: dict) -> None:

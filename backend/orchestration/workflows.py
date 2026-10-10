@@ -203,7 +203,13 @@ class AgentRunWorkflow:
                 # waiting does not fix a bad run, and offering a Resume that cannot work is worse
                 # than a clear failure. `is_engine_exit` is deliberately narrow about the
                 # difference — see its docstring in build_types.
-                if is_engine_exit(report.message):
+                #
+                # NOT for the two accessibility phases. Their screens close an unfinished walk or
+                # judging pass only on the failure path (`fail_run_core` → close_unfinished_*),
+                # and they offer no Resume — so a parked journey read "Walking now" for ever and a
+                # parked judge pass hid behind "checking" until the claim lease ran out. Failing
+                # them closes the work cleanly, exactly as before this park existed.
+                if is_engine_exit(report.message) and inp.phase not in LONG_VERIFY_PHASES:
                     self._report = None     # consume, so the next pass awaits a FRESH report
                     if await self._park(inp, report.message, "dispatch_phase"):
                         continue

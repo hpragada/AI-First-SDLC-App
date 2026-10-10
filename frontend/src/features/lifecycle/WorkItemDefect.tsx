@@ -6,7 +6,8 @@ import { runStatusLabel, runStatusTone } from "../../labels";
 import { artifactsForWorkItem, clarificationsForWorkItem } from "../../links";
 import { countCell } from "./glance";
 import { railNodeView } from "./railView";
-import { phaseLabel, statusLabel, visibleLifecycleNodes } from "./phases";
+import { phaseLabel, visibleLifecycleNodes } from "./phases";
+import { boardStatusLabel } from "./WorkItemsBoard";
 import { useCompanionGate } from "../identity/CompanionGate";
 import { useApprovals, useClarifications, useLifecycle, useRuns, useTriggerPhase, useWorkItem } from "./hooks";
 import { dispatchUnclaimed, isTerminalState } from "../../types";
@@ -242,7 +243,8 @@ function WorkItemDefectLive() {
                 internal id: that is what it exists for. */}
             <Kv
               rows={[
-                ["State", statusLabel(workItem.data.state)],
+                // Mockup M9: the same words the Board and the List show for this item.
+                ["State", boardStatusLabel(workItem.data)],
                 [
                   "Artifacts",
                   countCell(workItem.data.artifact_count ?? 0,

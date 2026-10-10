@@ -1492,6 +1492,9 @@ export interface A11yConformanceRow {
   // What the statement will actually say: their word, else the evidence's, else not evaluated.
   effective: A11yConformanceLevel;
   needs_a_person: boolean;
+  // Why no level is suggested, when `needs_a_person` — one line a reviewer can act on. Empty
+  // otherwise (recon 2026-10-10, finding 7).
+  why: string;
 }
 
 export interface A11yConformanceTotals {
@@ -1516,6 +1519,8 @@ export interface A11yConformanceBasis {
   latest: {
     id: string;
     label: string;
+    // When the audit started — the screen adds the time of day in the reader's own clock.
+    started_at: string | null;
     finished_at: string | null;
     asked: number;
     opened: number;
@@ -1544,8 +1549,14 @@ export interface A11yConformance {
   artifact_id: string | null;
   required_role: string;
   can_export: boolean;
+  // When the signed statement was last exported (marked Published); null until then.
+  exported_at?: string | null;
   export_refused_because: string;
   can_sign: boolean;
+  // An audit is still running, so the numbers are still coming in; signing waits for it.
+  audit_in_progress: boolean;
+  // Nothing has looked at anything yet: the signing panel says "Run an audit first".
+  has_evidence: boolean;
 }
 
 export interface A11yReviewDecision {

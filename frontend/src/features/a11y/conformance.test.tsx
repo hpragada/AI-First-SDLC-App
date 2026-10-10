@@ -7,7 +7,7 @@
 // export it will refuse, or leaking our model versions onto a client's page, would be worse than
 // no screen at all — it would be a document someone puts their name to.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { renderWithProviders } from "../../test/utils";
@@ -80,12 +80,15 @@ function conformance(over: Record<string, unknown> = {}) {
     export_refused_because:
       "This cannot be exported unsigned. A conformance statement carries someone's professional judgement, and the platform has none to give.",
     can_sign: true,
+    audit_in_progress: false,
+    has_evidence: true,
     // Which pass the numbers were compiled from. The default is a project that has had one
     // audit, because that is the ordinary case and the one the section is written for.
     basis: {
       latest: {
         id: "48506881-0000-0000-0000-000000000000",
-        label: "audit 48506881",
+        label: "the audit of 21 Aug 2026",
+        started_at: "2026-08-21T11:40:00Z",
         finished_at: "2026-08-21T12:01:00Z",
         asked: 12,
         opened: 12,
@@ -141,11 +144,11 @@ describe("S-37 conformance statement", () => {
     // And the count is on the page, not buried — in the headline tile AND on the checkbox the
     // reviewer has to tick, which is why there are two of them.
     expect(screen.getAllByText("54").length).toBe(2);
-    // The tile's label reads "Not checked yet" and its figure carries "of 55" beside it, so the
+    // The tile's label reads "Not settled yet" (mockup M6) and its figure carries "of 55" beside it, so the
     // reader can see this is 54 OUT OF the whole standard. What is being guarded is unchanged:
     // the count is on the headline as itself, never folded into a supporting result.
     const tile = screen
-      .getAllByText("Not checked yet")
+      .getAllByText("Not settled yet")
       .map((el) => el.closest(".tile"))
       .find(Boolean);
     expect(tile).toBeDefined();
@@ -254,7 +257,7 @@ describe("S-37 conformance statement", () => {
     expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("signed · offers the export and says the versions are recorded but not shown", async () => {
+  it("signed · offers the export and a link to the statement, without engine talk", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...AUTHED,
       [/a11y-conformance\/$/, conformance({
@@ -266,9 +269,47 @@ describe("S-37 conformance statement", () => {
     renderWithProviders(<A11yConformanceScreen />);
 
     await screen.findByText("Signed by Aisha Khan · QA Lead");
-    expect(screen.getByRole("button", { name: "Export…" })).toBeDefined();
-    // D-A11Y-96: the absence is explained, so nobody later reads it as an omission.
-    expect(screen.getByText(/deliberately not shown here/)).toBeDefined();
+    expect(screen.getByRole("button", { name: "Export" })).toBeDefined();
+    // Recon 2026-10-10: "View statement" opens the statement itself — no "publish gate" link,
+    // and no sentence about engine or prompt versions on a client's screen.
+    expect(screen.getByRole("link", { name: "View statement" }).getAttribute("href")).toBe("/artifacts/a-1");
+    expect(screen.queryByText(/publish gate/)).toBeNull();
+    expect(screen.queryByText(/prompt version/)).toBeNull();
+    expect(screen.getByText("Export downloads the signed statement and marks it Published.")).toBeDefined();
+  });
+
+  it("exported · says when, and offers to export again", async () => {
+    vi.stubGlobal("fetch", stubRoutes([
+      ...AUTHED,
+      [/a11y-conformance\/$/, conformance({
+        signed: true, signed_name: "Aisha Khan", signed_role: "qa_lead",
+        signed_at: "2026-08-18T16:20:00Z", can_export: true, export_refused_because: "",
+        artifact_id: "a-1", exported_at: "2026-08-18T16:30:00Z",
+      })],
+    ]));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    await screen.findByText(/^Exported 18 Aug 2026, /);
+    expect(screen.getByRole("button", { name: "Export again" })).toBeDefined();
+  });
+
+  it("export publishes, then downloads the signed wording", async () => {
+    const routes = stubRoutes([
+      ...AUTHED,
+      [/a11y-conformance\/export\/$/, { artifact_id: "a-1", exported_at: "2026-08-18T16:30:00Z" }],
+      [/a11y-conformance\/$/, conformance({
+        signed: true, signed_name: "Aisha Khan", signed_role: "qa_lead",
+        signed_at: "2026-08-18T16:20:00Z", can_export: true, export_refused_because: "",
+        artifact_id: "a-1",
+      })],
+    ]);
+    vi.stubGlobal("fetch", routes);
+    const calls = () => routes.mock.calls.map(([u]) => String(u));
+    renderWithProviders(<A11yConformanceScreen />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Export" }));
+    await waitFor(() => expect(calls().some((u) => /artifacts\/a-1\/download\/$/.test(u))).toBe(true));
+    expect(calls().some((u) => /a11y-conformance\/export\/$/.test(u))).toBe(true);
   });
 
   it("stale · the signature stands, the export does not", async () => {
@@ -331,7 +372,9 @@ describe("S-37 · which run this statement was compiled from", () => {
     vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
     renderWithProviders(<A11yConformanceScreen />);
 
-    await screen.findByText("audit 48506881");
+    // Mockup M4: named by when it ran, in the reader's clock — never by its id.
+    await screen.findByText(/^the audit of /);
+    expect(screen.queryByText(/48506881/)).toBeNull();
     expect(screen.getByText("12 of 12")).toBeDefined();
   });
 
@@ -342,7 +385,8 @@ describe("S-37 · which run this statement was compiled from", () => {
       basis: {
         latest: {
           id: "48506881-0000-0000-0000-000000000000",
-          label: "audit 48506881",
+          label: "the audit of 21 Aug 2026",
+          started_at: "2026-08-21T11:40:00Z",
           finished_at: "2026-08-21T12:01:00Z",
           asked: 12,
           opened: 12,
@@ -353,7 +397,9 @@ describe("S-37 · which run this statement was compiled from", () => {
     })]]));
     renderWithProviders(<A11yConformanceScreen />);
 
-    await screen.findByText("audit 48506881");
+    // Mockup M4: named by when it ran, in the reader's clock — never by its id.
+    await screen.findByText(/^the audit of /);
+    expect(screen.queryByText(/48506881/)).toBeNull();
     expect(screen.getByText("2 earlier audit(s)")).toBeDefined();
   });
 
@@ -419,5 +465,49 @@ describe("A save that fails speaks the product's language, not the browser's", (
     await userEvent.click(screen.getByRole("button", { name: "Sign" }));
 
     await screen.findByText(said);
+  });
+});
+
+
+// ── Recon 2026-10-10: mockups M1, M2, M6, M7 ─────────────────────────────────────────────
+
+describe("S-37 after the recon fixes", () => {
+  it("names the criteria tile for what it counts (M1)", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText("Criteria to decide");
+    expect(screen.queryByText("Waiting on you")).toBeNull();
+  });
+
+  it("says an audit is running and holds the signature until it ends (M2)", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance({
+      audit_in_progress: true,
+    })]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText("An audit is running — these numbers are still coming in");
+    expect(screen.getByText("Checked so far")).toBeDefined();
+    expect(screen.getByText("Sign opens when the audit finishes.")).toBeDefined();
+    expect((screen.getByRole("button", { name: "Sign" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("asks for an audit first when nothing has been checked (M7)", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance({
+      has_evidence: false,
+    })]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText("Run an audit first");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Sign" })).toBeNull();
+  });
+
+  it("says why a row needs a decision (M6)", async () => {
+    const base = conformance() as { rows: Record<string, unknown>[] };
+    const rows = base.rows.map((r, i) => (i === 0
+      ? { ...r, needs_a_person: true, suggested: null, verdict: null,
+          why: "The automatic rule looked, but can't settle this criterion on its own. Choose a level." }
+      : r));
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, { ...base, rows }]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText(/can't settle this criterion on its own/);
   });
 });

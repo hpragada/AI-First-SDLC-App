@@ -817,7 +817,7 @@ export const api = {
     body,
   }),
   a11yConformanceExport: (tenantId: string, projectId: string) =>
-    req<{ artifact_id: string | null; publish_via: string; signed_by: string; signed_at: string | null }>(
+    req<{ artifact_id: string | null; exported_at: string | null; signed_by: string; signed_at: string | null }>(
       "POST", `/projects/${projectId}/a11y-conformance/export/`, { tenantId }),
   startCodeIntel: (projectId: string, repoId: string) =>
     // mode "agent" → the 00c agent runs on the companion; "mechanical" → the CodeIntelJob

@@ -213,11 +213,11 @@ def test_routes_must_be_a_list(world):
 def test_the_route_list_describes_itself_for_a_console(world):
     from apps.a11y.routes import describe_routes
 
-    assert "no routes are registered" in describe_routes(world["t"], world["p"])
+    assert "No pages are listed" in describe_routes(world["t"], world["p"])
     _register(world, "/", "/legacy")
-    assert describe_routes(world["t"], world["p"]) == "2 route(s) registered for audit"
+    assert describe_routes(world["t"], world["p"]) == "2 pages listed"
     register_routes(tenant_id=world["t"], project_id=world["p"], routes=["/"], replace=True)
-    assert describe_routes(world["t"], world["p"]) == "1 route(s) registered for audit, 1 disabled"
+    assert describe_routes(world["t"], world["p"]) == "1 page listed, 1 excluded"
 
 
 def test_a_sitemap_dump_is_refused_with_a_reason(world):
@@ -693,6 +693,48 @@ def test_an_audit_where_nothing_opened_fails_loudly(world):
     assert "nothing to report on" in out["reason"]
     audit.refresh_from_db()
     assert audit.status == A11yBaselineAudit.Status.FAILED
+
+
+def test_an_audits_start_and_end_are_in_the_activity_log(world):
+    """Recon 2026-10-10, finding 11: the log listed the pages but never that an audit was started
+    (by whom, on which address, over which pages) nor how it ended. Each is now one entry, filed
+    under the project so the project's own log shows it."""
+    from apps.a11y.baseline import abandon_audit
+    from apps.ledger.models import Event
+
+    failed = _audit(world, "/admin")
+    _post(world, failed, _screen("/admin", load_error="HTTP 403", elements=[]))
+    finish_baseline_audit(tenant_id=world["t"], audit_id=str(failed.id))
+
+    walked_off = _audit(world, "/", "/login")
+    abandon_audit(tenant_id=world["t"], audit_id=str(walked_off.id))
+
+    def actions(audit):
+        return list(Event.objects.filter(target_type="a11y_audit", target_id=audit.id)
+                    .order_by("ts").values_list("action", flat=True))
+
+    assert actions(failed) == ["a11y.audit.started", "a11y.audit.failed"]
+    assert actions(walked_off) == ["a11y.audit.started", "a11y.audit.abandoned"]
+    started = Event.objects.get(target_id=failed.id, action="a11y.audit.started")
+    assert started.payload["address"] == "http://localhost:5173"
+    assert started.payload["pages"] == ["/admin"]
+    assert str(started.project_id) == world["p"]
+
+
+def test_an_audit_is_named_by_the_day_it_ran_never_by_its_id(world):
+    """Recon 2026-10-10, finding 5: "baseline audit b0813885" reached the Artifacts list and the
+    conformance statement. Named by the day instead, and still told apart from a second audit
+    the same day."""
+    from apps.a11y.baseline import _title, audit_label
+
+    first = _audit(world, "/")
+    second = _audit(world)
+    day = f"{first.created_at.day} {first.created_at:%b %Y}"
+
+    assert audit_label(first) == f"the audit of {day}"
+    assert audit_label(second) == f"the audit of {day} (2nd that day)"
+    assert _title(first) == f"audit of {day}"
+    assert str(first.id)[:8] not in _title(first)
 
 
 def test_an_audit_nobody_captured_anything_for_also_fails(world):

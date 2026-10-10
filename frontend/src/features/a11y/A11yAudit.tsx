@@ -41,6 +41,7 @@ import type {
   A11yRoute,
 } from "../../types";
 import { A11yTabs } from "./A11yTabs";
+import { a11yTime, a11yWhen } from "./dates";
 import { LoadFailed } from "./LoadFailed";
 import {
   AUDIT_IN_FLIGHT,
@@ -214,15 +215,8 @@ function auditBadge(audit: A11yAuditRow): "done" | "failed" | "waiting" {
   return "waiting";
 }
 
-function when(value: string | null | undefined): string {
-  if (!value) return "";
-  return new Date(value).toLocaleString(undefined, {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+// One format across the Accessibility tabs: "10 Oct 2026, 6:12 PM" (see ./dates).
+const when = a11yWhen;
 
 // ── adding pages ────────────────────────────────────────────────────────────
 //
@@ -693,7 +687,8 @@ function RunStrip({
             </span>
             <span className="t-sm">Passes</span>
             <span className="t-sm">
-              {passes} <span className="u-muted">({PAGES_PER_PASS} pages each)</span>
+              {passes}{" "}
+              <span className="u-muted">· up to {PAGES_PER_PASS} pages per pass</span>
             </span>
             <span className="t-sm">Standard</span>
             <span className="t-sm">WCAG 2.2 Level AA</span>
@@ -1060,6 +1055,23 @@ function FinishStalledAudit({
   );
 }
 
+/** Mockup M5: "Audit complete · finished Oct 10, 3:45 PM" with "started 3:30 PM" under it. The
+ *  header used to print the START time beside the word "complete", while the conformance
+ *  statement printed the finish time — one audit, two times, neither labelled. */
+function finishedTitle(done: string, audit: A11yAuditRow) {
+  const started = a11yTime(audit.created_at);
+  return (
+    <>
+      {done} · finished {when(audit.updated_at)}
+      {started && (
+        <span className="t-sm u-muted" style={{ display: "block", fontWeight: "normal" }}>
+          started {started}
+        </span>
+      )}
+    </>
+  );
+}
+
 function LatestAudit({
   audit,
   projectId,
@@ -1095,7 +1107,7 @@ function LatestAudit({
             ? "Audit could not run"
             : rechecked
               ? `${done} · ${when(audit.created_at)}, rechecked ${rechecked}`
-              : `${done} · ${when(audit.created_at)}`
+              : finishedTitle(done, audit)
         }
         actions={badge}
       >
@@ -1127,13 +1139,14 @@ function LatestAudit({
               </div>
               <div className="tile">
                 <div className="tile__num">{outcome.waiting}</div>
-                <div className="tile__label">Waiting on a person</div>
-                {/* Never "0 problems left". Nothing waiting means every check was sure enough to
-                    answer on its own — not that the application is clean. */}
+                {/* Mockup M1: was "Waiting on a person", beside the Conformance tab's "Waiting on
+                    you" — elements here, criteria there, and the shared words made two correct
+                    numbers look like a contradiction. Named for what it counts, and it links to
+                    where those items are. Never "0 problems left": nothing to review means every
+                    check was sure enough to answer on its own, not that the application is clean. */}
+                <div className="tile__label">Items to review</div>
                 <div className="tile__sub">
-                  {outcome.waiting === 0
-                    ? "every check answered on its own"
-                    : "the checks could not decide"}
+                  <Link to="/a11y">in the Review queue →</Link>
                 </div>
               </div>
             </div>
@@ -1352,9 +1365,9 @@ function LatestAudit({
         </div>
         <div className="tile">
           <div className="tile__num">{progress.unreachable}</div>
-          <div className="tile__label">Would not open</div>
+          <div className="tile__label">Pages that didn't load</div>
           <div className="tile__sub">
-            {rejudging ? "when the audit ran" : "recorded, never guessed"}
+            {rejudging ? "when the audit ran" : "each one listed, never guessed"}
           </div>
         </div>
       </div>

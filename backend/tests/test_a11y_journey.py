@@ -1395,8 +1395,12 @@ def test_the_address_is_suggested_from_the_last_audit_then_the_repository(world)
     from_repo = suggested_address(world["t"], world["p"])
     assert from_repo.url == "http://127.0.0.1:3000" and "acme/web" in from_repo.source
 
-    A11yBaselineAudit.objects.create(tenant=world["tenant"], project=world["project"],
-                                     base_url="http://localhost:4180/", routes=["/"])
+    # An audit still running is not "your last audit" yet (recon 2026-10-10, finding 9).
+    running = A11yBaselineAudit.objects.create(tenant=world["tenant"], project=world["project"],
+                                               base_url="http://localhost:4180/", routes=["/"])
+    assert suggested_address(world["t"], world["p"]).url == "http://127.0.0.1:3000"
+    running.status = A11yBaselineAudit.Status.COMPLETE
+    running.save(update_fields=["status"])
     from_audit = suggested_address(world["t"], world["p"])
     assert from_audit.url == "http://localhost:4180", "the audit wins, and the slash is trimmed"
     assert from_audit.source == "your last audit"

@@ -506,7 +506,7 @@ def publish_baseline(*, tenant_id, project_id, audit=None) -> dict:
         )
     with tenant_context(tenant_id):
         tools.log_event(
-            tenant_id, "a11y", "a11y.baseline_published", "artifact", created["id"],
+            tenant_id, "a11y", "a11y.baseline_recorded", "artifact", created["id"],
             {"criteria": len(rows), "version": created.get("version"),
              "audit": external_ref["audit"], "updated": same_audit},
         )

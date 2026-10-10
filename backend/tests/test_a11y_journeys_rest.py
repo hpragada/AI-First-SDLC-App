@@ -99,7 +99,8 @@ def test_the_list_carries_the_journeys_the_address_and_what_cannot_be_walked(wor
 
 def test_the_address_prefers_the_last_audit_over_the_repository(world):
     A11yBaselineAudit.objects.create(tenant=world["tenant"], project=world["project"],
-                                     base_url="http://localhost:4180", routes=["/"])
+                                     base_url="http://localhost:4180", routes=["/"],
+                                     status=A11yBaselineAudit.Status.COMPLETE)
     body = _client("lead@acme.test").get(world["url"]).json()
     assert body["base_url"] == "http://localhost:4180"
     assert body["base_url_source"] == "your last audit"

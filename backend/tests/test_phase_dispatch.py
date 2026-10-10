@@ -914,6 +914,44 @@ async def test_workflow_genuine_phase_failure_still_ends_the_run_terminally(monk
     assert calls == ["compose", "dispatch", "fail"]      # never parked
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["a11y_judge", "a11y_journey"])
+async def test_workflow_engine_exit_fails_an_accessibility_run_instead_of_parking(
+        monkeypatch, phase):
+    """An engine stop on the two accessibility phases must FAIL, not park.
+
+    Their screens close an unfinished walk or judging pass only on the failure path
+    (`fail_run_core` → close_unfinished_journey / close_unfinished_ai_pass) and offer no Resume.
+    Parked, a journey read "Walking now" for ever and could not be walked again (recon
+    2026-10-10, finding 1). Every other phase keeps the park — see the test above it."""
+    from temporalio.worker import Worker
+
+    from orchestration.workflows import AgentRunWorkflow
+
+    calls: list[str] = []
+    _patch_cores(monkeypatch, calls)
+    monkeypatch.setattr(activities, "park_run_core",
+                        lambda *a, **k: (calls.append("park"), {"status": "parked"})[1])
+
+    client = await _client()
+    tq = f"test-{uuid.uuid4()}"
+    inp = _companion_input()
+    inp.phase = phase
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        async with Worker(client, task_queue=tq, workflows=[AgentRunWorkflow],
+                          activities=activities.ALL_ACTIVITIES, activity_executor=executor):
+            handle = await client.start_workflow(
+                AgentRunWorkflow.run, inp, id=f"wf-{uuid.uuid4()}", task_queue=tq)
+            await handle.signal(
+                AgentRunWorkflow.phase_reported,
+                PhaseReport(status="failed",
+                            message="Claude usage limit reached — resets at 5pm"))
+            result = await handle.result()
+
+    assert result["status"] == "phase_failed"
+    assert calls == ["compose", "dispatch", "fail"]      # never parked
+
+
 # ── G6a: the address a keyboard journey walks reaches the machine walking it ──
 #
 # The companion needs it BEFORE the agent starts — it is what the browser is locked to — and the

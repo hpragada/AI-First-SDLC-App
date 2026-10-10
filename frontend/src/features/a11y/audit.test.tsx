@@ -71,7 +71,7 @@ function route(over: Record<string, unknown> = {}) {
 function routesBody(over: Record<string, unknown> = {}) {
   return {
     routes: [route()],
-    summary: "1 route(s) registered for audit",
+    summary: "1 page listed",
     scope_change: {},
     // The QA Lead's view by default. The read-only view is asserted on its own below, because
     // it is a state in its own right rather than the absence of one.
@@ -95,7 +95,7 @@ describe("S-38 pages and audit", () => {
   it("empty · names the two ways in, and explains nothing else", async () => {
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),
-      [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
+      [/a11y-routes/, routesBody({ routes: [], summary: "No pages are listed for this project" })],
       [/a11y-audits/, { audits: [] }],
     ]));
     renderWithProviders(<A11yAudit />);
@@ -1278,7 +1278,7 @@ describe("S-38 registering pages — the two ways in", () => {
     // It was titled "Add pages", which is nearly the name of the OTHER button on this screen.
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),
-      [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
+      [/a11y-routes/, routesBody({ routes: [], summary: "No pages are listed for this project" })],
       [/a11y-audits/, { audits: [] }],
     ]));
     renderWithProviders(<A11yAudit />);
@@ -1362,7 +1362,7 @@ describe("S-38 registering pages — the two ways in", () => {
     // Two buttons that both add pages, and nothing anywhere saying what separates them.
     vi.stubGlobal("fetch", stubRoutes([
       ...authed(),
-      [/a11y-routes/, routesBody({ routes: [], summary: "no routes are registered" })],
+      [/a11y-routes/, routesBody({ routes: [], summary: "No pages are listed for this project" })],
       [/a11y-audits/, { audits: [] }],
     ]));
     renderWithProviders(<A11yAudit />);
@@ -1408,7 +1408,7 @@ describe("S-38 registering pages — the two ways in", () => {
       .toBe("of 3 asked for");
     // A page that would not open is a RESULT, and it is counted and named rather than left to
     // look like progress that has not happened yet.
-    expect(screen.getByText("Would not open").previousElementSibling?.textContent).toBe("1");
+    expect(screen.getByText("Pages that didn't load").previousElementSibling?.textContent).toBe("1");
     expect(screen.getByText("Pass").previousElementSibling?.textContent).toContain("of 1");
     // Nothing here asks the person to sit and watch.
     expect(screen.getByText(/You can leave this page/)).toBeTruthy();
@@ -1448,6 +1448,7 @@ describe("S-38 registering pages — the two ways in", () => {
       [/a11y-audits/, {
         audits: [audit({
           status: "complete", progress: null,
+          created_at: "2026-08-21T09:00:00Z", updated_at: "2026-08-21T09:15:00Z",
           summary: { asked: 3, opened: 3, never_reported: [] },
           outcome: { problems: 4, critical: 1, high: 3, waiting: 2 },
         })],
@@ -1456,6 +1457,11 @@ describe("S-38 registering pages — the two ways in", () => {
     renderWithProviders(<A11yAudit />);
 
     expect(await screen.findByText(/Audit complete/)).toBeTruthy();
+    // Mockup M5: one audit, one clear time — the finish in the heading, the start under it.
+    expect(screen.getByText(/Audit complete · finished/)).toBeTruthy();
+    expect(screen.getByText(/^started /)).toBeTruthy();
+    // Mockup M8: the passes line says what 60 is.
+    expect(screen.getByText(/up to 60 pages per pass/)).toBeTruthy();
     expect(screen.queryByText("Audit running")).toBeNull();
     expect(screen.getByText("Pages reported").previousElementSibling?.textContent).toBe("3");
     expect(screen.getByText("Problems open").previousElementSibling?.textContent).toBe("4");
@@ -1463,7 +1469,7 @@ describe("S-38 registering pages — the two ways in", () => {
       .toContain("1 critical");
     // The two are counted apart: a problem the platform is sure about and a question it is
     // asking a person are different things, and the way through to answering them is offered.
-    expect(screen.getByText("Waiting on a person").previousElementSibling?.textContent).toBe("2");
+    expect(screen.getByText("Items to review").previousElementSibling?.textContent).toBe("2");
     expect(screen.getByRole("link", { name: /Answer the 2 waiting/ })).toBeTruthy();
   });
 
@@ -1482,8 +1488,11 @@ describe("S-38 registering pages — the two ways in", () => {
     renderWithProviders(<A11yAudit />);
 
     await screen.findByText(/Audit complete/);
-    expect(screen.getByText("every check answered on its own")).toBeTruthy();
-    expect(screen.queryByRole("link", { name: /waiting/ })).toBeNull();
+    // Mockup M1: "Items to review", linked to where those items are — never "0 problems left".
+    expect(screen.getByText("Items to review").previousElementSibling?.textContent).toBe("0");
+    expect(screen.getByRole("link", { name: /in the Review queue/ }).getAttribute("href"))
+      .toBe("/a11y");
+    expect(screen.queryByText(/no problems/i)).toBeNull();
     // A page that never opened is stated, never absorbed into a clean-looking result.
     expect(screen.getByText("One page was asked for and never opened")).toBeTruthy();
     expect(screen.getByText(/nothing they might have contained is treated as passing/))

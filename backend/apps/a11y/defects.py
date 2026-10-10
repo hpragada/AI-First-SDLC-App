@@ -187,7 +187,14 @@ def _element_words(selector: str) -> str:
         return ""
     last = parts[-1]
     if ident := _id_of(last):
-        return f"#{ident}"
+        # Said in words, never as `#id` (recon 2026-10-10, finding 4): a client reading a board
+        # card does not read CSS. A landmark id is the region it names ("main content"); any
+        # other id is quoted as the name its developer gave it. The selector itself stays on
+        # the ticket under **Element**, verbatim, for whoever fixes it.
+        region = _REGION_IDS.get(ident.lower())
+        if region:
+            return region.removeprefix("the ")
+        return f'the "{ident}" element'
 
     noun = _ELEMENT_WORDS.get(_tag_of(last), "")
     if not noun:
@@ -231,7 +238,31 @@ def _criterion_handles(criteria) -> dict[str, str]:
         return {}
 
 
-def _title(finding, handles: dict[str, str] | None = None) -> str:
+def _page_names(tenant_id, project_id) -> dict[str, str]:
+    """`{path: name}` for this project's listed pages — what a person calls each page.
+
+    Never raises, for the same reason `_criterion_handles` does not: a missing name costs a
+    title some polish, never a ticket.
+    """
+    from .models import A11yRoute
+
+    try:
+        with tenant_context(tenant_id):
+            return {path: label for path, label in A11yRoute.objects.filter(
+                tenant_id=tenant_id, project_id=project_id).exclude(label="")
+                .values_list("path", "label")}
+    except Exception:  # noqa: BLE001 — see docstring
+        return {}
+
+
+def _page_words(route: str, pages: dict[str, str] | None) -> str:
+    """"the Catalogue entry page" when the page has a name; its address otherwise."""
+    name = (pages or {}).get(route or "", "").strip()
+    return f"the {name} page" if name else (route or "this page")
+
+
+def _title(finding, handles: dict[str, str] | None = None,
+           pages: dict[str, str] | None = None) -> str:
     """A defect title a person can act on without opening anything else.
 
     It used to read `Accessibility: 1.4.1 on /loans/current — #loans-table > tbody >
@@ -247,7 +278,9 @@ def _title(finding, handles: dict[str, str] | None = None) -> str:
     where = _element_words(finding.selector) or finding.route or "this page"
     name = (handles or {}).get(finding.criterion, "")
     rule = f"{name} ({finding.criterion})" if name else finding.criterion
-    return f"Accessibility: {rule} on {finding.route} — {where}"[:512]
+    # The page by its NAME when it has one (recon 2026-10-10, finding 4) — "/staff/catalogue-entry"
+    # is an address, not what anybody calls the page. The address stays on the ticket as Screen.
+    return f"Accessibility: {rule} on {_page_words(finding.route, pages)} — {where}"[:512]
 
 
 #: How a finding's source reads on the ticket. One phrase, used wherever the source is named, so
@@ -478,6 +511,7 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
         # a name beside a criterion number — reused rather than copied, so a ticket and
         # the queue can never end up calling 1.4.1 two different things.
         handles = _criterion_handles(owner.criterion for owner in owners.values())
+        pages = _page_names(tenant_id, project_id)
 
         existing = [
             item for item in WorkItem.objects.filter(
@@ -549,7 +583,7 @@ def record_a11y_findings(*, tenant_id, project_id, run_id=None) -> dict:
                 created = WorkItem.objects.create(
                     tenant_id=tenant_id, project_id=project_id, type=WorkItem.Type.DEFECT,
                     parent=_parent_for(first, container),
-                    title=_title(finding, handles),
+                    title=_title(finding, handles, pages),
                     description=_description(finding, others), state=WorkItem.State.IN_PROGRESS,
                     external_ref=_external_ref(finding, rank.get(fingerprint), others),
                 )

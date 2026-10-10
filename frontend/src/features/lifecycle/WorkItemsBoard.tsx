@@ -180,6 +180,14 @@ export function boardStatus(card: WorkItemCard): { key: BoardStatusKey | null; y
   }
 }
 
+/** The status words a card shows, as plain text — the Board's own rule, so every screen that
+ *  names a work item's status says the same thing (recon 2026-10-10, mockup M9). Falls back to
+ *  the stored state only where the Board itself would. */
+export function boardStatusLabel(card: WorkItemCard): string {
+  const { key } = boardStatus(card);
+  return (key && BOARD_STATUS_LABEL.get(key)) || STATE_BADGE[card.state]?.label || card.state;
+}
+
 function PersonMark() {
   return (
     <span className="badge__mine" title="You can act on this">
@@ -676,7 +684,9 @@ export function WorkItemsBoard({ forceView }: { forceView?: BoardView }) {
               </Chip>,
               // The actual lifecycle phase — the feature stream is not a phase (row 50).
               item.current_phase ? phaseLabel(item.current_phase) : "Not started",
-              statusBadge(item),
+              // Mockup M9: the Board's pill, not the stored state. A new defect read "Not
+              // started" on the Board and "In progress" here — one item, two statuses.
+              phasePill(item),
               item.artifact_count ?? 0,
               item.owner ?? "—",
               // Bugs S.No 140. The row action lives in the LIST, not on the board card: a card

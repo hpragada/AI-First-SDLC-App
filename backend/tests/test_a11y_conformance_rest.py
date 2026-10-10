@@ -116,7 +116,7 @@ def test_export_is_refused_while_unsigned(world):
     assert "cannot be exported unsigned" in response.json()["detail"]
 
 
-def test_signing_then_exporting_works_and_names_the_publish_route(world):
+def test_signing_then_exporting_publishes_the_statement(world):
     client = _client("aisha@acme.test")
     signed = client.post(f"{world['base']}/sign/",
                          {"name": "Aisha Khan", "acknowledged": True}, format="json")
@@ -128,7 +128,10 @@ def test_signing_then_exporting_works_and_names_the_publish_route(world):
 
     out = client.post(f"{world['base']}/export/").json()
     assert out["signed_by"] == "Aisha Khan"
-    assert out["publish_via"] == f"/api/artifacts/{artifact.id}/publish/"
+    assert out["artifact_id"] == str(artifact.id) and out["exported_at"]
+    artifact.refresh_from_db()
+    # Published inside the platform — never routed to test management (recon 2026-10-10).
+    assert artifact.status == Artifact.Status.PUBLISHED
 
 
 def test_signing_without_the_acknowledgement_is_refused(world):

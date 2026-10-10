@@ -521,6 +521,7 @@ def test_the_audit_entry_carries_the_versions_the_screen_never_shows(world):
 def test_signing_registers_and_approves_the_conformance_artifact(world):
     """B1 — the signature IS the gate. `approved` is the state the publish endpoint demands, so
     nothing reaches a system of record without a named human approval."""
+    _cover(world, "1.1.1", "passed")   # something was checked — signing needs evidence (M7)
     _sign(world)
     artifact = Artifact.objects.get(type="conformance")
     assert artifact.status == Artifact.Status.APPROVED
@@ -530,6 +531,7 @@ def test_signing_registers_and_approves_the_conformance_artifact(world):
 
 def test_editing_after_signing_clears_the_signature(world):
     """A signature on wording nobody signed is worse than no signature."""
+    _cover(world, "1.1.1", "passed")   # something was checked — signing needs evidence (M7)
     _sign(world)
     out = save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id,
                      body="I have rewritten this entirely.")
@@ -541,6 +543,7 @@ def test_editing_after_signing_clears_the_signature(world):
 
 def test_saving_the_same_text_is_not_an_edit(world):
     """Otherwise a screen that saves on blur would destroy a signature by doing nothing."""
+    _cover(world, "1.1.1", "passed")   # something was checked — signing needs evidence (M7)
     out = _sign(world)
     save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id,
                body=out["body"], scope=out["scope"])
@@ -601,6 +604,27 @@ def test_evidence_that_produces_the_same_statement_is_not_a_change(world):
 # AC3 — no auto-certify
 # ===========================================================================================
 
+def test_export_publishes_the_signed_statement_and_records_it(world):
+    from apps.a11y.conformance import export_statement
+
+    _cover(world, "1.1.1", "passed")
+    _sign(world)
+    assert state(tenant_id=world["t"], project_id=world["p"])["exported_at"] is None
+    after = export_statement(tenant_id=world["t"], project_id=world["p"],
+                             user_id=world["aisha"].id)
+    art = Artifact.objects.get(id=after["artifact_id"])
+    assert art.status == Artifact.Status.PUBLISHED and art.published_at is not None
+    assert after["exported_at"] == art.published_at
+    assert Event.objects.filter(tenant_id=world["t"], action="a11y.conformance.exported").count() == 1
+
+
+def test_export_refuses_an_unsigned_statement(world):
+    from apps.a11y.conformance import export_statement
+
+    with pytest.raises(ConformanceError, match="cannot be exported unsigned"):
+        export_statement(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id)
+
+
 def test_an_unsigned_statement_cannot_be_exported(world):
     with pytest.raises(ConformanceError, match="cannot be exported unsigned"):
         check_export(tenant_id=world["t"], project_id=world["p"])
@@ -618,14 +642,24 @@ def test_a_project_that_has_never_run_anything_still_answers(world):
     assert payload["drafted"] is True, "the body is the platform's draft, not a stored one"
 
 
-def test_signing_an_empty_project_is_allowed_and_says_so(world):
-    """A statement of "we evaluated nothing" is a legitimate, honest document — and the reviewer
-    is told the number they are signing for before they can."""
-    out = _sign(world)
-    assert out["signed"] is True
-    assert Event.objects.get(
-        action="a11y.conformance.signed").payload["not_evaluated"] == ALL_AA
-    assert f"**{ALL_AA} were not**" in out["body"]
+def test_signing_with_nothing_checked_is_refused_and_says_run_an_audit(world):
+    """Team decision 2026-10-10 (recon finding 8, mockup M7), replacing the earlier rule that a
+    "we evaluated nothing" statement could be signed: with no evidence of any kind there is
+    nothing to sign, and the screen says "Run an audit first". Refused here as well as hidden
+    there."""
+    assert state(tenant_id=world["t"], project_id=world["p"])["has_evidence"] is False
+    with pytest.raises(ConformanceError, match="Run an audit first"):
+        _sign(world)
+    assert not Event.objects.filter(action="a11y.conformance.signed").exists()
+
+
+def test_a_reviewers_own_level_is_evidence_enough_to_sign(world):
+    """A person who assessed a criterion themselves has evidence, even with no check run."""
+    from apps.a11y.conformance import save_draft
+
+    save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id,
+               verdicts={"1.1.1": {"level": "supports", "note": "checked by hand"}})
+    assert _sign(world)["signed"] is True
 
 
 # ══ Which audit this statement came from, and when ═══════════════════════════════════
@@ -663,9 +697,12 @@ def test_the_statement_names_the_audit_it_was_compiled_from(world):
 
     body = state(tenant_id=world["t"], project_id=world["p"])["body"]
     assert "## What this is based on" in body
-    assert str(audit.id) in body
-    assert f"audit {str(audit.id)[:8]}" in body
+    # Named by when it ran, never by its id (recon 2026-10-10, finding 5) — the id is kept with
+    # the signature instead (`test_the_provenance_is_part_of_what_gets_signed`).
+    assert str(audit.id) not in body and str(audit.id)[:8] not in body
+    assert audit.created_at.strftime("%d %B %Y at %H:%M UTC") in body
     assert audit.updated_at.strftime("%d %B %Y") in body
+    assert basis["latest"]["label"].startswith("the audit of ")
 
 
 def test_the_provenance_is_part_of_what_gets_signed(world):
@@ -673,11 +710,17 @@ def test_the_provenance_is_part_of_what_gets_signed(world):
     from apps.a11y.conformance import _body_hash
 
     audit = _audit(world)
+    _cover(world, "1.1.1", "passed")   # something was checked — signing needs evidence (M7)
     signed = _sign(world)
     assert signed["signed"] is True
     row = A11yConformanceStatement.objects.get(project_id=world["p"])
-    assert str(audit.id) in row.body
+    # The wording names the audit by when it ran; the audit's id travels with the signature
+    # record, so a signed statement can still be traced to exactly what produced it.
+    assert audit.created_at.strftime("%d %B %Y at %H:%M UTC") in row.body
     assert row.signed_body_hash == _body_hash(row.body)
+    from apps.ledger.models import Event
+    event = Event.objects.get(action="a11y.conformance.signed")
+    assert event.payload["audit_id"] == str(audit.id)
 
 
 def test_a_project_that_has_never_been_audited_says_exactly_that(world):
@@ -722,7 +765,8 @@ def test_the_most_recent_audit_is_named_and_the_earlier_ones_are_counted(world):
     assert basis["audits"] == 3
 
     body = state(tenant_id=world["t"], project_id=world["p"])["body"]
-    assert str(latest.id) in body
+    latest.refresh_from_db()
+    assert latest.created_at.strftime("%d %B %Y at %H:%M UTC") in body
     assert "2 earlier completed audit(s)" in body
 
 
@@ -838,3 +882,76 @@ def test_filling_the_gaps_never_speaks_over_a_real_answer(world):
 
     got = coverage.summary(world["t"], world["p"])
     assert got["2.5.3"]["routes"]["/account"] == "failed"
+
+
+# ══ Recon 2026-10-10: an audit in progress, the evidence documents, and the reasons ══════
+
+def test_while_an_audit_runs_the_statement_says_so_and_cannot_be_signed(world):
+    """Finding 3 (mockup M2): pages are recorded as they arrive, so mid-audit numbers are
+    partial. The screen is told, and signing is refused on the server too."""
+    from apps.a11y.models import A11yBaselineAudit
+
+    _cover(world, "1.1.1", "passed", engine="AI")
+    _audit(world, status=A11yBaselineAudit.Status.CAPTURING)
+    assert state(tenant_id=world["t"], project_id=world["p"])["audit_in_progress"] is True
+    with pytest.raises(ConformanceError, match="still running"):
+        _sign(world)
+
+    A11yBaselineAudit.objects.update(status=A11yBaselineAudit.Status.COMPLETE)
+    assert state(tenant_id=world["t"], project_id=world["p"])["audit_in_progress"] is False
+    assert _sign(world)["signed"] is True
+
+
+def test_signing_publishes_the_audit_documents_and_nothing_else(world):
+    """Team decision 2026-10-10 (mockup M10, option A): the Accessibility report and baseline
+    stay Draft until the statement is signed, and signing publishes them. A report filed
+    against a development run belongs to that run's own gate and is left alone; the statement
+    itself stays Approved until it is exported."""
+    run = Run.objects.create(tenant=world["tenant"], work_item=world["story"],
+                             temporal_workflow_id="w1", agent_spec=_spec(world))
+    def art(kind, run_id=None):
+        return Artifact.objects.create(tenant=world["tenant"], project=world["project"],
+                                       phase="testing", type=kind, sor="internal", title=kind,
+                                       status=Artifact.Status.DRAFT, run_id=run_id)
+    report, baseline, run_report = art("a11y_report"), art("a11y_baseline"), art(
+        "a11y_report", run.id)
+
+    _cover(world, "1.1.1", "passed", engine="AI")
+    _sign(world)
+
+    for row in (report, baseline, run_report):
+        row.refresh_from_db()
+    assert report.status == baseline.status == Artifact.Status.PUBLISHED
+    assert report.published_at is not None
+    assert run_report.status == Artifact.Status.DRAFT, "a run's report waits for its own gate"
+    assert Artifact.objects.get(type="conformance").status == Artifact.Status.APPROVED
+    payload = Event.objects.get(action="a11y.conformance.signed").payload
+    assert sorted(payload["evidence_published"]) == sorted([str(report.id), str(baseline.id)])
+
+
+def test_a_row_waiting_on_a_person_says_why(world):
+    """Finding 7 (mockup M6): "needs your decision" with no reason told a reviewer nothing."""
+    _cover(world, "1.1.1", "not_applicable")       # a rule, on a criterion the AI owns
+    rows = {r["criterion"]: r for r in state(tenant_id=world["t"], project_id=world["p"])["rows"]}
+    row = rows["1.1.1"]
+    assert row["needs_a_person"] is True
+    assert row["why"] == ("The automatic rule looked, but can't settle this criterion on its "
+                          "own. Choose a level.")
+    assert "nothing for this rule to apply to" in row["evidence"]
+    assert all(r["why"] == "" for r in rows.values() if not r["needs_a_person"])
+
+
+def test_the_evidence_sentence_names_every_check_that_looked(world):
+    """Finding 7: a row established by the AI and a rule said "for this rule" only."""
+    _cover(world, "1.1.1", "not_applicable", engine="AI")
+    _cover(world, "1.1.1", "not_applicable", engine="rule")
+    row = next(r for r in state(tenant_id=world["t"], project_id=world["p"])["rows"]
+               if r["criterion"] == "1.1.1")
+    assert "nothing for these checks to apply to" in row["evidence"]
+
+
+def test_only_levels_the_evidence_suggested_are_counted_as_suggested(world):
+    """Finding 8 (mockup M7): "Not evaluated" is not a suggestion — nothing looked."""
+    _cover(world, "1.1.1", "passed", engine="AI")
+    totals_ = state(tenant_id=world["t"], project_id=world["p"])["totals"]
+    assert totals_["platform_suggested"] == 1

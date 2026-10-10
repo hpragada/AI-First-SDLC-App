@@ -37,6 +37,23 @@ from apps.tenancy.context import tenant_context
 
 from .routes import RouteError, normalise_path, route_paths
 
+
+def _log_audit(tenant_id, audit, action: str, payload: dict | None = None,
+               actor: str = "a11y") -> None:
+    """Put an audit's start and its ending in the activity log (recon 2026-10-10, finding 11).
+
+    The log recorded the pages being listed but never that an audit was started — by whom, on
+    which address, over which pages — nor how it ended. Best-effort, like every ledger write
+    here: a log line must never be the reason an audit fails to start or to close.
+    """
+    from mcp_platform_state import tools
+
+    try:
+        tools.log_event(str(tenant_id), actor, action, "a11y_audit", str(audit.id),
+                        {"project_id": str(audit.project_id), **(payload or {})})
+    except Exception:  # noqa: BLE001 — see docstring
+        pass
+
 #: The manifest format the audit script reads. Bumped only for a change the script must know
 #: about — the same discipline as `capture.CAPTURE_VERSION`, and for the same reason.
 MANIFEST_VERSION = 1
@@ -132,13 +149,17 @@ def start_baseline_audit(*, tenant_id, project_id, base_url: str = "", routes=No
         address = resolved.url
 
     with tenant_context(tenant_id):
-        return A11yBaselineAudit.objects.create(
+        audit = A11yBaselineAudit.objects.create(
             tenant_id=tenant_id, project_id=project_id,
             base_url=address[:512], routes=ordered,
             status=(A11yBaselineAudit.Status.PENDING if claimable
                     else A11yBaselineAudit.Status.CAPTURING),
             started_by_id=started_by or None,
         )
+    _log_audit(tenant_id, audit, "a11y.audit.started",
+               {"address": audit.base_url, "pages": list(ordered)},
+               actor=str(started_by or "a11y"))
+    return audit
 
 
 def audit_manifest(audit) -> dict:
@@ -298,6 +319,7 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
             audit.status = A11yBaselineAudit.Status.FAILED
             audit.summary = summary
             audit.save(update_fields=["status", "summary", "updated_at"])
+        _log_audit(tenant_id, audit, "a11y.audit.failed", {"reason": summary["reason"]})
         return {"audit_id": run_key, "status": audit.status, **summary}
 
     # Before the judging, because it is a fact about the capture and belongs on the audit even
@@ -349,6 +371,8 @@ def finish_baseline_audit(*, tenant_id, audit_id, trigger=None, reason: str = ""
     out = {"audit_id": run_key, "status": audit.status, "report": result.get("report"),
            **summary}
     if not started:
+        _log_audit(tenant_id, audit, "a11y.audit.finished",
+                   {"pages_opened": len(opened), "pages_asked": len(audit.routes or [])})
         # Everything knowable is known, so the baseline is written now (QA-18). When a judge
         # IS dispatched it is written after that run ends instead — a baseline published while
         # half the verdicts are still in flight would state a position that is about to change.
@@ -428,10 +452,34 @@ def publish_baseline_for(*, tenant_id, audit) -> dict:
         return {"artifact_id": None, "error": str(exc)}
 
 
+def audit_label(audit) -> str:
+    """An audit as a person names it: "the audit of 10 Oct 2026".
+
+    It used to be `baseline audit b0813885` — a machine id on the Artifacts list and on the
+    conformance statement (recon 2026-10-10, finding 5). Named by the day it ran instead, and
+    still distinct per audit: a second audit the same day reads "the audit of 10 Oct 2026
+    (2nd that day)". The day is the platform's (UTC) day — the time of day is left to the
+    screens, which know the reader's own clock.
+    """
+    from .models import A11yBaselineAudit
+
+    when = audit.created_at
+    day = f"{when.day} {when:%b %Y}"
+    with tenant_context(str(audit.tenant_id)):
+        earlier = A11yBaselineAudit.objects.filter(
+            tenant_id=audit.tenant_id, project_id=audit.project_id,
+            created_at__date=when.date(), created_at__lt=when,
+        ).count()
+    if not earlier:
+        return f"the audit of {day}"
+    n = earlier + 1
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"the audit of {day} ({n}{suffix} that day)"
+
+
 def _title(audit) -> str:
-    """What this audit's report is called. Distinct per audit, because a baseline you cannot
-    tell apart from the next one is not a baseline."""
-    return f"baseline audit {str(audit.id)[:8]}"
+    """What this audit's judging task and document are called — see `audit_label`."""
+    return audit_label(audit).removeprefix("the ")
 
 
 def complete_audit(tenant_id, capture_key) -> bool:
@@ -458,6 +506,8 @@ def complete_audit(tenant_id, capture_key) -> bool:
             return False
         audit.status = A11yBaselineAudit.Status.COMPLETE
         audit.save(update_fields=["status", "updated_at"])
+    _log_audit(tenant_id, audit, "a11y.audit.finished",
+               {"pages_asked": len(audit.routes or [])})
     # Now, and not a moment earlier: the verdicts are in and the defects are reconciled, so the
     # baseline states a position that has actually settled (QA-18). Writing it when the audit's
     # capture closed would have published a standing that was still changing.
@@ -741,6 +791,7 @@ def abandon_audit(*, tenant_id, audit_id, reason: str = "") -> dict:
         audit.status = A11yBaselineAudit.Status.FAILED
         audit.summary = {**(audit.summary or {}), **summary}
         audit.save(update_fields=["status", "summary", "updated_at"])
+    _log_audit(tenant_id, audit, "a11y.audit.abandoned", {"reason": summary["reason"]})
     return {"audit_id": run_key, "status": audit.status, "closed": True, **summary}
 
 

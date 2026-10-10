@@ -287,8 +287,14 @@ export function useSignA11yConformance(projectId: string | undefined) {
 
 export function useExportA11yConformance(projectId: string | undefined) {
   const tenantId = useTenantId();
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.a11yConformanceExport(tenantId, projectId as string),
+    onSuccess: () => {
+      // The statement is Published now: the Export box says when, and Artifacts shows it.
+      qc.invalidateQueries({ queryKey: ["a11y-conformance", projectId] });
+      qc.invalidateQueries({ queryKey: ["artifacts", projectId] });
+    },
   });
 }
 

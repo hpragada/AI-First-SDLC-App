@@ -327,9 +327,13 @@ def suggested_address(tenant_id, project_id):
 
     from .models import A11yBaselineAudit
 
+    # FINISHED audits only. An audit still running is not yet "your last audit" — the hint said
+    # so the moment one started, before anything had confirmed the address answered (recon
+    # 2026-10-10, finding 9).
     with tenant_context(tenant_id):
         last = (A11yBaselineAudit.objects
-                .filter(tenant_id=tenant_id, project_id=project_id)
+                .filter(tenant_id=tenant_id, project_id=project_id,
+                        status=A11yBaselineAudit.Status.COMPLETE)
                 .exclude(base_url="").order_by("-created_at").only("base_url").first())
     if last is not None:
         return ResolvedAppUrl(url=last.base_url.rstrip("/"), source="your last audit")
