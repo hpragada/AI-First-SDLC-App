@@ -614,8 +614,28 @@ def test_export_publishes_the_signed_statement_and_records_it(world):
                              user_id=world["aisha"].id)
     art = Artifact.objects.get(id=after["artifact_id"])
     assert art.status == Artifact.Status.PUBLISHED and art.published_at is not None
-    assert after["exported_at"] == art.published_at
+    exported = Event.objects.get(tenant_id=world["t"], action="a11y.conformance.exported")
+    assert after["exported_at"] == exported.ts
     assert Event.objects.filter(tenant_id=world["t"], action="a11y.conformance.exported").count() == 1
+
+
+def test_exported_time_is_the_latest_export_of_this_signature(world):
+    """Edit, re-sign, re-export: the box must show the new export, not the first publish."""
+    from apps.a11y.conformance import export_statement
+
+    _cover(world, "1.1.1", "passed")
+    _sign(world)
+    first = export_statement(tenant_id=world["t"], project_id=world["p"],
+                             user_id=world["aisha"].id)["exported_at"]
+    save_draft(tenant_id=world["t"], project_id=world["p"], user_id=world["aisha"].id,
+               body="Edited after the first export.")
+    _sign(world)
+    assert state(tenant_id=world["t"], project_id=world["p"])["exported_at"] is None
+    second = export_statement(tenant_id=world["t"], project_id=world["p"],
+                              user_id=world["aisha"].id)["exported_at"]
+    assert second > first
+    art = Artifact.objects.get(type="conformance")
+    assert art.published_at < second, "first publish date is kept for reporting"
 
 
 def test_export_refuses_an_unsigned_statement(world):

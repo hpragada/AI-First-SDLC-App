@@ -328,6 +328,8 @@ export the statement, which cannot be undone without a new signature.
 **Expected**
 - The statement is no longer signed, and the Export box is gone until it is signed again.
 - After re-signing, Export reads **Export** (not "Export again") until it is exported again.
+- Export again, then check the box: `Exported …` shows the time of **this** export, not the earlier
+  one (Bugs S.No 393). In Artifacts the statement reads **Published**.
 
 ---
 

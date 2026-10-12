@@ -985,10 +985,18 @@ def check_export(*, tenant_id, project_id) -> None:
 
 
 def _exported_at(row):
+    """When THIS signature was last exported. Not `published_at`: that is the first publish,
+    kept on purpose for reporting, so after an edit, re-sign and re-export the box showed the
+    earlier export's time (live retest 2026-10-12)."""
+    from apps.ledger.models import Event
+
     artifact = row.artifact if row.artifact_id else None
-    if artifact is None or artifact.status != "published":
+    if artifact is None or artifact.status != "published" or not row.signed_at:
         return None
-    return artifact.published_at
+    latest = (Event.objects.filter(tenant_id=row.tenant_id, action="a11y.conformance.exported",
+                                   target_id=row.id, ts__gte=row.signed_at)
+              .order_by("-ts").values_list("ts", flat=True).first())
+    return latest or artifact.published_at
 
 
 def export_statement(*, tenant_id, project_id, user_id) -> dict:
