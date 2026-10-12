@@ -163,7 +163,8 @@ export the statement, which cannot be undone without a new signature.
 
 **Expected**
 - Under "What was checked" is a reason, for example `Only a person can judge this criterion — no
-  check can observe it. Choose a level.`
+  check can observe it. Pick its result in the Conformance column.`
+- FAIL if any reason says `Choose a level` (Bugs S.No 392).
 
 ---
 
@@ -327,3 +328,82 @@ export the statement, which cannot be undone without a new signature.
 **Expected**
 - The statement is no longer signed, and the Export box is gone until it is signed again.
 - After re-signing, Export reads **Export** (not "Export again") until it is exported again.
+
+---
+
+### TC-967 · After signing, the Statement and Export boxes stay on screen
+
+| Field | Value |
+|---|---|
+| Suite | TS-16 Accessibility |
+| Type | Functional |
+| Priority | High |
+| Screen | `/a11y/conformance` |
+| Persona | QA Lead |
+| Automation | Yes (server test) |
+
+**Why this case exists.** Bugs S.No 390. Signing used to hide both boxes until the page was
+reloaded.
+
+**Steps**
+1. On a signed statement, change one word and press **Save draft**. The signature clears.
+2. Tick both boxes and press **Sign**. Do not leave the page.
+
+**Expected**
+- The **Statement** box stays where it was.
+- The Sign box turns into the **Export** box straight away.
+- No `You are not the accessibility reviewer` banner appears.
+
+**Pass / Fail**
+- FAIL if either box disappears, or only comes back after visiting another page.
+
+---
+
+### TC-968 · While the first audit runs, the statement says so
+
+| Field | Value |
+|---|---|
+| Suite | TS-16 Accessibility |
+| Type | UX |
+| Priority | Medium |
+| Screen | `/a11y/conformance` |
+| Persona | QA Lead |
+| Automation | Yes |
+
+**Why this case exists.** Bugs S.No 391.
+
+**Steps**
+1. On a project with no finished audit, press **Run audit**, then open the Conformance tab while it
+   runs.
+
+**Expected**
+- The Statement box shows a blue note: `The first audit is still running` / `This statement will be
+  compiled from it once it finishes. Until then, the numbers above are only what has been checked
+  so far.`
+- On a project that has never been audited and has no audit running, the yellow `No completed audit
+  is recorded for this project` warning still shows (TC-961).
+
+---
+
+### TC-969 · The person's pick is a "result", never a "level"
+
+| Field | Value |
+|---|---|
+| Suite | TS-16 Accessibility |
+| Type | UX |
+| Priority | Low |
+| Screen | `/a11y/conformance` |
+| Persona | QA Lead |
+| Automation | Yes |
+
+**Why this case exists.** Bugs S.No 392. On this page "level" is WCAG's Level A / AA.
+
+**Expected**
+- Third tile: `Pick a conformance result for each one in the table below`, or `Nothing left to
+  decide` when it shows 0.
+- Every row reason ends `Pick its result in the Conformance column.`
+- Sign box: `…and that N results were suggested by the evidence…`
+- The table's `Level` column and the title `all 55 Level A & AA criteria` are unchanged.
+
+**Pass / Fail**
+- FAIL if `choose a level` or `levels were suggested` appears anywhere on the tab.

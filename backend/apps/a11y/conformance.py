@@ -306,22 +306,28 @@ def why_undecided(cover: dict | None, *, owner: str | None = None, always_human:
 
     Recon 2026-10-10, finding 7: a row said "needs your decision" and never why. The reasons are
     `suggest`'s own guards, in its own order, so the sentence cannot disagree with the decision.
+
+    Never "choose a level" (mockup B, 2026-10-12): on this page "level" is WCAG's Level A / AA,
+    so the person's pick is named as a result, in the column where it is made.
     """
     routes = (cover or {}).get("routes") or {}
     outcomes = set(routes.values())
     engines = sorted(e for e in ((cover or {}).get("engines") or ()) if e != "human")
     if "not_checked" in outcomes:
-        return "A page is still waiting to be checked. Finish the audit, or choose a level."
+        return ("A page is still waiting to be checked. Let the audit finish, or pick its result "
+                "in the Conformance column.")
     if "needs_human" in outcomes:
-        return "A check looked at this and couldn't decide. Choose a level."
+        return ("A check looked at this and couldn't decide. "
+                "Pick its result in the Conformance column.")
     if held_back:
-        return ("Part of the checking for this criterion is paused, so no level is suggested. "
-                "Choose one.")
+        return ("Part of the checking for this criterion is paused, so no result is suggested. "
+                "Pick its result in the Conformance column.")
     if always_human:
-        return "Only a person can judge this criterion — no check can observe it. Choose a level."
+        return ("Only a person can judge this criterion — no check can observe it. "
+                "Pick its result in the Conformance column.")
     who = " and ".join(_ENGINE_WORDS.get(e, e) for e in engines) or "a check"
     return (f"{who[:1].upper()}{who[1:]} looked, but can't settle this criterion on its own. "
-            f"Choose a level.")
+            "Pick its result in the Conformance column.")
 
 
 def _evidence_sentence(cover: dict | None, failures: int, adjudicated: int) -> str:

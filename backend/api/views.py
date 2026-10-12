@@ -1070,6 +1070,12 @@ class ProjectViewSet(
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
         except ConformanceError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        # The screen writes this reply straight into its cache, so it must carry everything the
+        # GET does. Without `can_sign` the Statement and Export boxes vanished after signing
+        # until the page was reloaded (live retest 2026-10-12).
+        from apps.a11y.conformance import can_sign
+        payload["can_sign"] = can_sign(tenant_id=self.tenant_id, project_id=str(project.id),
+                                       user_id=getattr(request.user, "id", None))
         return Response(payload)
 
     @action(detail=True, methods=["post"], url_path="a11y-conformance/export")

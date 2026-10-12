@@ -247,7 +247,7 @@ function Signing({
           {/* Both numbers are stated rather than implied. The second one is what a reviewer is
               most likely not to have noticed, and it is the one they are taking on. */}
           I understand that <strong>{data.totals.not_evaluated}</strong> criteria were not
-          evaluated and say so, and that <strong>{data.totals.platform_suggested}</strong> levels
+          evaluated and say so, and that <strong>{data.totals.platform_suggested}</strong> results
           were suggested by the evidence and I have not changed them.
         </Check>
         <Field
@@ -292,6 +292,15 @@ function Signing({
 function Basis({ data }: { data: A11yConformance }) {
   const basis = data.basis;
   const latest = basis?.latest;
+  if (!latest && data.audit_in_progress) {
+    // Mockup A1: the first audit is running, which is not the same as nothing having been done.
+    return (
+      <Banner variant="info" title="The first audit is still running">
+        This statement will be compiled from it once it finishes. Until then, the numbers above are
+        only what has been checked so far.
+      </Banner>
+    );
+  }
   if (!latest) {
     return (
       <Banner variant="warning" title="No completed audit is recorded for this project">
@@ -599,7 +608,10 @@ export function A11yConformanceScreen() {
               counts. Still a subset of the "Not settled yet" tile, which the sub-line says. */}
           <div className="tile__label">Criteria to decide</div>
           <div className="tile__sub">
-            Of the {data.totals.not_evaluated} — choose a level for these below
+            {/* Mockup B: "level" is WCAG's Level A / AA on this page, so the pick is a result. */}
+            {data.totals.awaiting_a_person === 0
+              ? "Nothing left to decide"
+              : "Pick a conformance result for each one in the table below"}
           </div>
         </div>
       </div>

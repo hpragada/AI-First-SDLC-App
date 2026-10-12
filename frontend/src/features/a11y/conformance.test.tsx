@@ -248,7 +248,7 @@ describe("S-37 conformance statement", () => {
     // Both counts are stated on the checkbox rather than implied — the second is the one a
     // reviewer is least likely to have noticed, and it is what they are taking on.
     expect(screen.getByText(/criteria were not/)).toBeDefined();
-    expect(screen.getByText(/levels/)).toBeDefined();
+    expect(screen.getByText(/results\s+were suggested/)).toBeDefined();
 
     const boxes = screen.getAllByRole("checkbox");
     await userEvent.click(boxes[0]);
@@ -504,10 +504,31 @@ describe("S-37 after the recon fixes", () => {
     const base = conformance() as { rows: Record<string, unknown>[] };
     const rows = base.rows.map((r, i) => (i === 0
       ? { ...r, needs_a_person: true, suggested: null, verdict: null,
-          why: "The automatic rule looked, but can't settle this criterion on its own. Choose a level." }
+          why: "The automatic rule looked, but can't settle this criterion on its own. Pick its result in the Conformance column." }
       : r));
     vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, { ...base, rows }]]));
     renderWithProviders(<A11yConformanceScreen />);
     await screen.findByText(/can't settle this criterion on its own/);
+  });
+});
+
+
+// ── Live retest 2026-10-12: mockups A1 and B ─────────────────────────────────────────────
+
+describe("S-37 wording after the 12 Oct retest", () => {
+  it("says the first audit is still running instead of 'no completed audit' (A1)", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance({
+      audit_in_progress: true, basis: { latest: null },
+    })]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText("The first audit is still running");
+    expect(screen.queryByText("No completed audit is recorded for this project")).toBeNull();
+  });
+
+  it("names the pick a conformance result, never a level (B)", async () => {
+    vi.stubGlobal("fetch", stubRoutes([...AUTHED, [/a11y-conformance\/$/, conformance()]]));
+    renderWithProviders(<A11yConformanceScreen />);
+    await screen.findByText("Criteria to decide");
+    expect(screen.queryByText(/choose a level/i)).toBeNull();
   });
 });

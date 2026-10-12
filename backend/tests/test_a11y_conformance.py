@@ -936,7 +936,7 @@ def test_a_row_waiting_on_a_person_says_why(world):
     row = rows["1.1.1"]
     assert row["needs_a_person"] is True
     assert row["why"] == ("The automatic rule looked, but can't settle this criterion on its "
-                          "own. Choose a level.")
+                          "own. Pick its result in the Conformance column.")
     assert "nothing for this rule to apply to" in row["evidence"]
     assert all(r["why"] == "" for r in rows.values() if not r["needs_a_person"])
 

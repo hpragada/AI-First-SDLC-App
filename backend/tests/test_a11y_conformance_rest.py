@@ -134,6 +134,16 @@ def test_signing_then_exporting_publishes_the_statement(world):
     assert artifact.status == Artifact.Status.PUBLISHED
 
 
+def test_the_signing_reply_says_who_may_sign_like_the_page_load_does(world):
+    """The screen writes the reply into its cache; without can_sign the Statement and Export
+    boxes vanished after signing until a reload (live retest 2026-10-12)."""
+    client = _client("aisha@acme.test")
+    signed = client.post(f"{world['base']}/sign/",
+                         {"name": "Aisha Khan", "acknowledged": True}, format="json")
+    assert signed.status_code == 200, signed.content
+    assert signed.json()["can_sign"] is True
+
+
 def test_signing_without_the_acknowledgement_is_refused(world):
     response = _client("aisha@acme.test").post(
         f"{world['base']}/sign/", {"name": "Aisha Khan"}, format="json")
