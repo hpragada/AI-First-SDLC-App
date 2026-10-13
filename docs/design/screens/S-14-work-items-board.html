@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-14 · Work Items Board — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- ============ DEFAULT: board, all columns ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default · Board view</span>
+
+      <div class="page-head">
+        <div class="page-head__titles">
+          <h1 class="t-h1">Work Items</h1>
+          <p class="page-head__sub">Every work item across its phase. Columns are lifecycle phases; filter by level so the two tiers don't collide.</p>
+        </div>
+        <button class="btn btn--primary">+ New Work Item</button>
+      </div>
+
+      <div class="u-row u-wrap" style="margin-bottom:var(--space-4)">
+        <input class="input" type="search" placeholder="Search work items…" style="max-width:240px" aria-label="Search work items">
+        <select class="select" style="max-width:150px" aria-label="Filter by phase"><option>Phase: All</option><option>Ideation</option><option>Requirements</option><option>PRD</option><option>Architecture</option><option>UX Design</option><option>Task Breakdown</option><option>Implementation</option><option>Code Review</option><option>Testing</option><option>Test Automation</option><option>Security</option><option>CI/CD</option><option>Deployment</option></select>
+        <span class="u-row-tight"><button class="chip chip--filter" aria-pressed="true">All levels</button><button class="chip chip--filter">Epics</button><button class="chip chip--filter">Tasks</button><button class="chip chip--filter">Defects</button></span>
+        <select class="select" style="max-width:140px" aria-label="Filter by role"><option>Role: All</option><option>Product Owner</option><option>Architect</option><option>Designer</option><option>Tech Lead</option><option>Engineer</option><option>Reviewer</option></select>
+        <select class="select" style="max-width:150px" aria-label="Filter by status"><option>Status: All</option><option>Draft</option><option>Awaiting gate</option></select>
+        <span class="u-spacer"></span>
+        <span class="segmented"><button aria-pressed="true">Board</button><button>List</button></span>
+      </div>
+
+      <!-- Bugs.xlsx row 27: columns are the full lifecycle from the phase catalog, in SDLC order,
+           numbered + human-readable (PRD was previously missing). The board scrolls horizontally.
+           App renders no per-column icon, so none here (see reconciliation note). -->
+      <div class="board">
+        <!-- 1. Ideation -->
+        <div class="board__col">
+          <div class="board__col-head"><span class="board__col-title">1. Ideation</span><span class="u-spacer"></span><span class="board__col-count">2</span></div>
+          <div class="board__list">
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-508</span><span class="badge badge--queued"><span class="status-dot"></span>Draft</span></div>
+              <div class="wi-card__title">Customer Loyalty Program</div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Epic</span></div>
+              <div class="wi-card__foot"><span>0 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">SC</span></div>
+            </div>
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-521</span><span class="badge badge--queued"><span class="status-dot"></span>Draft</span></div>
+              <div class="wi-card__title">Dark Mode UI Theme Support</div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Story</span></div>
+              <div class="wi-card__foot"><span>0 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">PN</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Requirements -->
+        <div class="board__col">
+          <div class="board__col-head"><span class="board__col-title">2. Requirements</span><span class="u-spacer"></span><span class="board__col-count">3</span></div>
+          <div class="board__list">
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-510</span><span class="badge badge--running"><span class="status-dot"></span>AI compiling…</span></div>
+              <div class="wi-card__title">Analytics Dashboard PRD Generation</div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Epic</span><span class="needs needs--clar"><span class="status-dot" style="background:currentColor"></span>1 Clarification</span></div>
+              <div class="wi-card__foot"><span>0 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">SC</span></div>
+            </div>
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-511</span></div>
+              <div class="wi-card__title">Fix Session Timeout Logic</div>
+              <div class="wi-card__meta"><span class="chip">Task</span><span class="needs needs--gate"><span class="status-dot" style="background:currentColor"></span>Gate: PM Approval Req.</span></div>
+              <div class="wi-card__foot"><span>1 artifact</span><span class="u-spacer"></span><span class="avatar avatar--sm">DO</span></div>
+            </div>
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-499</span><span class="badge badge--done"><span class="status-dot"></span>Phase complete</span></div>
+              <div class="wi-card__title">Multi-Currency Support</div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Story</span></div>
+              <div class="wi-card__foot"><span>3 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">ML</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. PRD -->
+        <div class="board__col">
+          <div class="board__col-head"><span class="board__col-title">3. PRD</span><span class="u-spacer"></span><span class="board__col-count">0</span></div>
+          <div class="board__list"></div>
+        </div>
+
+        <!-- 4. Architecture -->
+        <div class="board__col">
+          <div class="board__col-head"><span class="board__col-title">4. Architecture</span><span class="u-spacer"></span><span class="board__col-count">1</span></div>
+          <div class="board__list">
+            <div class="wi-card wi-card--selected">
+              <div class="wi-card__top"><span class="wi-card__id">WI-492</span><span class="needs needs--gate"><span class="status-dot" style="background:currentColor"></span>Review Architecture Gate</span></div>
+              <div class="wi-card__title">Stripe Webhook Integration</div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Epic</span><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-14</span></div>
+              <div class="wi-card__foot"><span>2 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">SC</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. UX Design -->
+        <div class="board__col">
+          <div class="board__col-head"><span class="board__col-title">5. UX Design</span><span class="u-spacer"></span><span class="board__col-count">1</span></div>
+          <div class="board__list">
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-487</span><span class="badge badge--running"><span class="status-dot"></span>AI compiling…</span></div>
+              <div class="wi-card__title">Checkout Flow Redesign</div>
+              <div class="wi-card__meta"><span class="chip badge--navy">Story</span></div>
+              <div class="wi-card__foot"><span>1 artifact</span><span class="u-spacer"></span><span class="avatar avatar--sm">PN</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6-13: remaining build-tier phases (empty in this sample) -->
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">6. Task Breakdown</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">7. Implementation</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">8. Code Review</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">9. Testing</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">10. Test Automation</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">11. Security</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">12. CI/CD</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+        <div class="board__col"><div class="board__col-head"><span class="board__col-title">13. Deployment</span><span class="u-spacer"></span><span class="board__col-count">0</span></div><div class="board__list"></div></div>
+      </div>
+    </div>
+
+    <!-- ============ List view ============ -->
+    <div class="state-block">
+      <span class="state-block__label">List view · same data</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Work Items</h2><span class="u-spacer"></span><span class="segmented"><button>Board</button><button aria-pressed="true">List</button></span></div>
+        <div class="panel__body--flush">
+          <table class="table table--in-panel">
+            <thead><tr><th>ID</th><th>Title</th><th>Level</th><th>Phase</th><th>Status</th><th>Artifacts</th><th>Owner</th></tr></thead>
+            <tbody>
+              <tr><td class="table__id">WI-508</td><td class="table__primary">Customer Loyalty Program</td><td><span class="chip badge--navy">Epic</span></td><td>Ideation</td><td><span class="badge badge--queued"><span class="status-dot"></span>Draft</span></td><td>0</td><td>Sarah Chen</td></tr>
+              <tr><td class="table__id">WI-510</td><td class="table__primary">Analytics Dashboard PRD Generation</td><td><span class="chip badge--navy">Epic</span></td><td>Requirements</td><td><span class="badge badge--needs-answer"><span class="status-dot"></span>1 Clarification</span></td><td>0</td><td>Sarah Chen</td></tr>
+              <tr><td class="table__id">WI-511</td><td class="table__primary">Fix Session Timeout Logic</td><td><span class="chip">Task</span></td><td>Requirements</td><td><span class="badge badge--gate"><span class="status-dot"></span>Gate: PM Approval</span></td><td>1</td><td>Dan Ortiz</td></tr>
+              <tr><td class="table__id">WI-499</td><td class="table__primary">Multi-Currency Support</td><td><span class="chip badge--navy">Story</span></td><td>Requirements</td><td><span class="badge badge--done"><span class="status-dot"></span>Phase complete</span></td><td>3</td><td>Marcus Lee</td></tr>
+              <tr><td class="table__id">WI-492</td><td class="table__primary">Stripe Webhook Integration</td><td><span class="chip badge--navy">Epic</span></td><td>Architecture</td><td><span class="badge badge--gate"><span class="status-dot"></span>Awaiting gate</span></td><td>2</td><td>Sarah Chen</td></tr>
+              <tr><td class="table__id">WI-487</td><td class="table__primary">Checkout Flow Redesign</td><td><span class="chip badge--navy">Story</span></td><td>UX Design</td><td><span class="badge badge--running"><span class="status-dot"></span>Running</span></td><td>1</td><td>Priya Nair</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Filtered: Tasks only ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Filtered · Level: Tasks only</span>
+      <div class="u-row u-wrap" style="margin-bottom:var(--space-4)">
+        <span class="u-row-tight"><button class="chip chip--filter">All levels</button><button class="chip chip--filter">Epics</button><button class="chip chip--filter" aria-pressed="true">Tasks</button><button class="chip chip--filter">Defects</button></span>
+        <span class="t-sm u-muted">Showing tasks from the build tier — fanned out by Task Breakdown.</span>
+      </div>
+      <div class="board">
+        <div class="board__col">
+          <div class="board__col-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg><span class="board__col-title">Implementation</span><span class="u-spacer"></span><span class="board__col-count">2</span></div>
+          <div class="board__list">
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-540</span><span class="badge badge--running"><span class="status-dot"></span>Running</span></div>
+              <div class="wi-card__title">Verify Stripe signing secret</div>
+              <div class="wi-card__meta"><span class="chip">Task</span><span class="chip">↖ WI-492</span></div>
+              <div class="wi-card__foot"><span>PR #218</span><span class="u-spacer"></span><span class="avatar avatar--sm">DO</span></div>
+            </div>
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-541</span><span class="badge badge--queued"><span class="status-dot"></span>Not started</span></div>
+              <div class="wi-card__title">Persist webhook event log</div>
+              <div class="wi-card__meta"><span class="chip">Task</span><span class="chip">↖ WI-492</span></div>
+              <div class="wi-card__foot"><span>0 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">DO</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="board__col">
+          <div class="board__col-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 6L9 17l-5-5"/></svg><span class="board__col-title">Review</span><span class="u-spacer"></span><span class="board__col-count">1</span></div>
+          <div class="board__list">
+            <div class="wi-card">
+              <div class="wi-card__top"><span class="wi-card__id">WI-538</span><span class="needs needs--clar"><span class="status-dot" style="background:currentColor"></span>Remediation child</span></div>
+              <div class="wi-card__title">Add idempotency key handling</div>
+              <div class="wi-card__meta"><span class="chip">Task</span><span class="chip">↖ WI-492</span></div>
+              <div class="wi-card__foot"><span>PR #214</span><span class="u-spacer"></span><span class="avatar avatar--sm">TR</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Empty project ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty project</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 4v16"/></svg>
+          <div class="empty__title">No work items yet</div>
+          <div class="empty__text">Create your first work item to start the lifecycle. Epics run the plan tier; Task Breakdown fans out the build tier.</div>
+          <button class="btn btn--primary">+ New Work Item</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("work-items");</script>
+</body>
+</html>

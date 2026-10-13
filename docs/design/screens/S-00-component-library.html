@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-00 · Component Library — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">S-00 · Component Library</h1>
+        <p class="page-head__sub">Every reusable class in <code class="t-mono">components.css</code>, in all variants. The visual + structural catalog screens compose from. Add a component here first, then use it on screens.</p>
+      </div>
+    </div>
+
+    <!-- BUTTONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Buttons</h2></div>
+      <div class="panel__body u-stack">
+        <div class="u-row u-wrap">
+          <button class="btn btn--primary">Primary action</button>
+          <button class="btn btn--secondary">Secondary</button>
+          <button class="btn btn--ghost">Ghost</button>
+          <button class="btn btn--danger">Danger</button>
+          <button class="btn btn--danger-solid">Delete</button>
+          <button class="btn btn--primary" disabled>Disabled</button>
+        </div>
+        <div class="u-row u-wrap">
+          <button class="btn btn--primary btn--sm">Small primary</button>
+          <button class="btn btn--secondary btn--sm">Small secondary</button>
+          <button class="btn btn--ghost btn--sm">Small ghost</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- FORM FIELDS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Form fields</h2></div>
+      <div class="panel__body">
+        <div class="grid grid--2">
+          <div>
+            <label class="field">
+              <span class="field__label">Work email</span>
+              <input class="input" type="email" value="sarah@acme.com">
+              <span class="field__help">We'll send the invite here.</span>
+            </label>
+            <label class="field field--error">
+              <span class="field__label">Org / workspace name <span class="req">*</span></span>
+              <input class="input" type="text" value="Acme Corp" aria-invalid="true">
+              <span class="field__error">That workspace name is already in use.</span>
+            </label>
+            <label class="field">
+              <span class="field__label">Track</span>
+              <select class="select">
+                <option>Greenfield</option>
+                <option>Brownfield</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <label class="field">
+              <span class="field__label">Description</span>
+              <textarea class="textarea">Card payment gateway handling Stripe + Adyen…</textarea>
+            </label>
+            <label class="field">
+              <span class="field__label">Password</span>
+              <input class="input" type="password" value="••••••••••">
+              <span class="strength"><span class="strength__bar is-on"></span><span class="strength__bar is-on"></span><span class="strength__bar is-on"></span><span class="strength__bar"></span></span>
+              <span class="field__help">Strong — add a symbol to max it out.</span>
+            </label>
+            <label class="check" style="margin-top:var(--space-4)">
+              <input type="checkbox" checked>
+              <span class="check__text">Support CSV export in v1 of the analytics dashboard.</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BADGES / CHIPS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Status badges (run-state color map)</h2></div>
+      <div class="panel__body u-stack">
+        <div class="u-row u-wrap">
+          <span class="badge badge--queued"><span class="status-dot"></span>Queued</span>
+          <span class="badge badge--waiting"><span class="status-dot"></span>Dispatched · waiting</span>
+          <span class="badge badge--running"><span class="status-dot"></span>Running</span>
+          <span class="badge badge--needs-answer"><span class="status-dot"></span>Needs answer</span>
+          <span class="badge badge--gate"><span class="status-dot"></span>Awaiting gate</span>
+          <span class="badge badge--done"><span class="status-dot"></span>Published</span>
+          <span class="badge badge--failed"><span class="status-dot"></span>Failed</span>
+          <span class="badge badge--parked"><span class="status-dot"></span>Parked for takeover</span>
+        </div>
+        <hr class="sep">
+        <div class="u-row u-wrap">
+          <span class="t-label">Type / level chips</span>
+          <span class="chip badge--navy">Epic</span>
+          <span class="chip badge--navy">Feature</span>
+          <span class="chip">Task</span>
+          <span class="chip">Story</span>
+          <span class="chip badge--orange">Defect</span>
+        </div>
+        <div class="u-row u-wrap">
+          <span class="t-label">"Needs you"</span>
+          <span class="needs needs--clar"><span class="status-dot" style="background:currentColor"></span>1 Clarification</span>
+          <span class="needs needs--gate"><span class="status-dot" style="background:currentColor"></span>Gate: PM Approval Req.</span>
+        </div>
+        <div class="u-row u-wrap">
+          <span class="t-label">Filter chips</span>
+          <button class="chip chip--filter" aria-pressed="true">Epics</button>
+          <button class="chip chip--filter">Tasks</button>
+          <button class="chip chip--filter">Defects</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- AVATARS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Avatars</h2></div>
+      <div class="panel__body u-row u-wrap">
+        <span class="avatar avatar--sm">SC</span>
+        <span class="avatar">ML</span>
+        <span class="avatar avatar--lg">PN</span>
+        <span class="avatar-group" aria-label="Sarah Chen, Marcus Lee, Priya Nair">
+          <span class="avatar">SC</span><span class="avatar">ML</span><span class="avatar">PN</span>
+        </span>
+      </div>
+    </section>
+
+    <!-- ACCOUNT MENU -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Account menu</h2></div>
+      <div class="panel__body">
+        <p class="t-sm u-muted" style="margin-bottom:var(--space-4)">Lives on the topbar avatar (every authenticated screen). Click the avatar to open; shows the signed-in user and Sign out. Closes on outside click, Esc, or navigation. Shown open below.</p>
+        <div class="account-menu" style="display:inline-block">
+          <button class="avatar" aria-label="Account menu for Sarah Chen" aria-haspopup="menu" aria-expanded="true">SC</button>
+          <div class="account-menu__pop" role="menu" aria-label="Account" style="position:static;margin-top:var(--space-2)">
+            <div class="account-menu__head">
+              <div class="account-menu__name">Sarah Chen</div>
+              <div class="account-menu__email">sarah.chen@acme.test</div>
+            </div>
+            <div class="account-menu__sep" role="separator"></div>
+            <button class="account-menu__item account-menu__item--danger" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CARDS -->
+    <section style="margin-bottom:var(--space-6)">
+      <div class="grid grid--2">
+        <div class="card"><div class="card__body">
+          <h3 class="t-h3">Standard card</h3>
+          <p class="t-sm u-muted" style="margin-top:var(--space-2)">Surface, 14px radius, subtle shadow. Default content container.</p>
+        </div></div>
+        <div class="card--attention"><div class="card__body">
+          <h3 class="t-h3">Architecture Gate Review</h3>
+          <p class="t-sm u-body" style="margin-top:var(--space-2)">Attention card — orange accent bar, tint, folded corner. Used for the active gate.</p>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- TABS + TABLE -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Tabs &amp; table</h2></div>
+      <div class="panel__body--flush">
+        <div class="tabs" style="padding:0 var(--space-5)">
+          <button class="tab tab--active">Pending</button>
+          <button class="tab">Decided history</button>
+        </div>
+        <table class="table table--in-panel">
+          <thead><tr><th>Run</th><th>Phase</th><th>Status</th><th>Owner</th><th>Cost</th></tr></thead>
+          <tbody>
+            <tr><td class="table__id">RUN-42</td><td class="table__primary">Architecture</td><td><span class="badge badge--gate"><span class="status-dot"></span>Awaiting gate</span></td><td>Marcus Lee</td><td class="table__id">$0.31</td></tr>
+            <tr><td class="table__id">RUN-41</td><td class="table__primary">Requirements</td><td><span class="badge badge--done"><span class="status-dot"></span>Completed</span></td><td>Sarah Chen</td><td class="table__id">$0.18</td></tr>
+            <tr><td class="table__id">RUN-40</td><td class="table__primary">PRD</td><td><span class="badge badge--needs-answer"><span class="status-dot"></span>Needs answer</span></td><td>Sarah Chen</td><td class="table__id">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- LIFECYCLE RAIL -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Lifecycle rail — type-adaptive (signature)</h2></div>
+      <div class="panel__body">
+        <div class="state-block">
+          <span class="state-block__label">Plan-tier (epic) · WI-492</span>
+          <div class="rail">
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Ideation</span><span class="rail__state">Approved</span></div>
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Requirements</span><span class="rail__state">Approved</span></div>
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">PRD</span><span class="rail__state">Approved</span></div>
+            <div class="rail__node rail__node--current"><span class="rail__dot">●</span><span class="rail__label">Architecture</span><span class="rail__state">Gate Pending</span></div>
+            <div class="rail__node rail__node--upcoming"><span class="rail__dot">5</span><span class="rail__label">UX Design</span><span class="rail__state">Upcoming</span></div>
+            <div class="rail__node rail__node--upcoming"><span class="rail__dot">6</span><span class="rail__label">Task Breakdown</span><span class="rail__state">Upcoming</span></div>
+          </div>
+        </div>
+        <div class="state-block" style="margin-bottom:0">
+          <span class="state-block__label">Build-tier (task) · with loop + child branch</span>
+          <span class="rail__loop">↺ Review ↔ Implementation loop ×2</span>
+          <div class="rail">
+            <div class="rail__node rail__node--done"><span class="rail__dot">✓</span><span class="rail__label">Implementation</span><span class="rail__state">PR #218</span></div>
+            <div class="rail__node rail__node--running"><span class="rail__dot"></span><span class="rail__label">Review</span><span class="rail__state">Running</span></div>
+            <div class="rail__node rail__node--failed"><span class="rail__dot">!</span><span class="rail__label">Test</span><span class="rail__state">Defect WI-547</span></div>
+            <div class="rail__node rail__node--upcoming"><span class="rail__dot">4</span><span class="rail__label">Merge</span><span class="rail__state">Upcoming</span></div>
+          </div>
+          <p class="rail__branch">⌐ Child defect: WI-547 "Signature check rejects valid test events"</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- BOARD + WI CARD -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Board column &amp; work-item card (signature)</h2></div>
+      <div class="panel__body">
+        <div class="board">
+          <div class="board__col">
+            <div class="board__col-head">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l9 5-9 5-9-5z"/></svg>
+              <span class="board__col-title">2. Requirements</span>
+              <span class="u-spacer"></span>
+              <span class="board__col-count">3</span>
+            </div>
+            <div class="board__list">
+              <div class="wi-card">
+                <div class="wi-card__top"><span class="wi-card__id">WI-510</span><span class="badge badge--running"><span class="status-dot"></span>AI compiling…</span></div>
+                <div class="wi-card__title">Analytics Dashboard PRD Generation</div>
+                <div class="wi-card__meta"><span class="chip badge--navy">Epic</span><span class="needs needs--clar"><span class="status-dot" style="background:currentColor"></span>1 Clarification</span></div>
+                <div class="wi-card__foot"><span>0 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">SC</span></div>
+              </div>
+              <div class="wi-card">
+                <div class="wi-card__top"><span class="wi-card__id">WI-499</span><span class="badge badge--done"><span class="status-dot"></span>Phase complete</span></div>
+                <div class="wi-card__title">Multi-Currency Support</div>
+                <div class="wi-card__meta"><span class="chip badge--navy">Feature</span></div>
+                <div class="wi-card__foot"><span>3 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">ML</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="board__col">
+            <div class="board__col-head">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/></svg>
+              <span class="board__col-title">3. Architecture</span>
+              <span class="u-spacer"></span>
+              <span class="board__col-count">1</span>
+            </div>
+            <div class="board__list">
+              <div class="wi-card wi-card--selected">
+                <div class="wi-card__top"><span class="wi-card__id">WI-492</span><span class="needs needs--gate"><span class="status-dot" style="background:currentColor"></span>Review Architecture Gate</span></div>
+                <div class="wi-card__title">Stripe Webhook Integration</div>
+                <div class="wi-card__meta"><span class="chip badge--navy">Epic</span><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-14</span></div>
+                <div class="wi-card__foot"><span>2 artifacts</span><span class="u-spacer"></span><span class="avatar avatar--sm">SC</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GATE PANEL + CRITERIA -->
+    <section style="margin-bottom:var(--space-6)">
+      <div class="grid grid--2">
+        <div class="card--attention gate-panel"><div class="card__body">
+          <span class="gate-panel__role">▲ Architecture gate · required role: architect</span>
+          <h3 class="t-h3">WI-492 · Stripe Webhook Integration</h3>
+          <p class="t-sm u-body">Approve to publish the System Sequence Diagram to Figma and advance to UX Design.</p>
+          <a href="#" class="t-sm">Preview artifact under review ↗</a>
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Approve</button>
+            <button class="btn btn--secondary">Reject</button>
+          </div>
+        </div></div>
+        <div class="card gate-panel"><div class="card__body">
+          <span class="gate-panel__role">Criteria gate · UX Design · WI-487</span>
+          <p class="criteria-progress">5 of 8 criteria met</p>
+          <div class="criteria-list">
+            <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Color contrast ≥ 4.5:1</span></label>
+            <label class="criteria-item criteria-item--met"><input type="checkbox" checked><span class="criteria-item__text">Keyboard navigable</span></label>
+            <label class="criteria-item"><input type="checkbox"><span class="criteria-item__text">Focus visible on all controls</span></label>
+          </div>
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary" disabled aria-disabled="true">Approve (3 remaining)</button>
+            <button class="btn btn--secondary">Reject</button>
+          </div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- CLARIFICATION CARD -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Clarification card (zero-cost Q&amp;A)</h2></div>
+      <div class="panel__body">
+        <div class="card clar-card"><div class="card__body">
+          <div class="clar-card__head">
+            <span class="wi-card__id">WI-510</span>
+            <span class="badge badge--needs-answer"><span class="status-dot"></span>Requirements · needs answer</span>
+            <span class="u-spacer"></span>
+            <span class="zero-cost">⏸ Paused — no usage billed while waiting · 6m</span>
+          </div>
+          <p class="t-body u-strong">Should the analytics dashboard support CSV export in v1?</p>
+          <p class="clar-card__why"><span class="lbl">Why I'm asking:</span> Affects the data-export NFR scope.</p>
+          <label class="check"><input type="checkbox"><span class="check__text">Yes — include CSV export in v1</span></label>
+          <div class="gate-panel__actions"><button class="btn btn--primary">Submit answer</button></div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- ARTIFACTS + SoR -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Artifact rows &amp; SoR chips</h2></div>
+      <div class="panel__body--flush">
+        <div class="artifact-row">
+          <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/><path d="M9 12h6M9 16h6"/></svg></span>
+          <div class="artifact-row__main"><div class="artifact-row__title">PRD: Stripe Webhook Integration</div><div class="artifact-row__meta">v1.2 · Requirements · Published</div></div>
+          <span class="badge badge--done"><span class="status-dot"></span>Published</span>
+          <a class="sor-chip sor-chip--confluence" href="#"><span class="sor-chip__glyph">C</span>Confluence</a>
+          <button class="btn btn--ghost btn--sm">Preview</button>
+        </div>
+        <div class="artifact-row">
+          <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span>
+          <div class="artifact-row__main"><div class="artifact-row__title">System Sequence Diagram</div><div class="artifact-row__meta">v0.9 · Architecture · Pending Architecture Gate</div></div>
+          <span class="badge badge--gate"><span class="status-dot"></span>Pending gate</span>
+          <a class="sor-chip sor-chip--figma" href="#"><span class="sor-chip__glyph">F</span>Figma</a>
+          <button class="btn btn--ghost btn--sm">Preview</button>
+        </div>
+        <div class="artifact-row">
+          <span class="artifact-row__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 19c-4 1.5-4-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.9 2.3 5.9 2.6 5.9 2.6a4.3 4.3 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.5 9c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg></span>
+          <div class="artifact-row__main"><div class="artifact-row__title">PR #218 · Verify Stripe signing secret</div><div class="artifact-row__meta">Draft · Implementation · acme/payments-api</div></div>
+          <span class="badge badge--waiting"><span class="status-dot"></span>Draft PR</span>
+          <a class="sor-chip sor-chip--github" href="#"><span class="sor-chip__glyph">G</span>GitHub</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONSOLE -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Run console (dark)</h2></div>
+      <div class="panel__body">
+        <div class="console" role="log" aria-label="Run console">
+          <div class="console__line"><span class="console__ts">10:42:01</span>Compiling requirements… <span class="ok">[OK]</span></div>
+          <div class="console__line"><span class="console__ts">10:42:14</span>Generating sequence diagrams… <span class="ok">[OK]</span></div>
+          <div class="console__line"><span class="console__ts">10:42:30</span>Validating against security rules… <span class="ok">[OK]</span></div>
+          <div class="console__line"><span class="console__ts">10:42:31</span><span class="info">Run completed. Awaiting gate.</span> <span class="console__cursor"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TOASTS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Toasts</h2></div>
+      <div class="panel__body u-stack">
+        <div class="toast toast--success"><div><div class="toast__title">Gate approved</div><div class="toast__body">Publishing System Sequence Diagram to Figma.</div></div></div>
+        <div class="toast toast--warning"><div><div class="toast__title">Companion offline</div><div class="toast__body">Phases can't run until you reconnect your machine.</div></div></div>
+        <div class="toast toast--danger"><div><div class="toast__title">Run failed</div><div class="toast__body">Engine exited before reporting. Retry?</div></div></div>
+        <div class="toast toast--info"><div><div class="toast__title">Run dispatched</div><div class="toast__body">Waiting for your companion to claim it.</div></div></div>
+      </div>
+    </section>
+
+    <!-- MODAL -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Modal</h2></div>
+      <div class="panel__body--flush">
+        <div class="modal-scrim">
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-t">
+            <div class="modal__header"><h3 class="modal__title" id="m-t">Connect a capability</h3><button class="modal__close" aria-label="Close">✕</button></div>
+            <div class="modal__body">
+              <label class="field"><span class="field__label">Vendor</span><select class="select"><option>Confluence</option></select></label>
+              <label class="field"><span class="field__label">Space key</span><input class="input" value="PAY"></label>
+            </div>
+            <div class="modal__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary">Test connection</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- EMPTY + SKELETON -->
+    <section style="margin-bottom:var(--space-6)">
+      <div class="grid grid--2">
+        <div class="panel"><div class="panel__body--flush">
+          <div class="empty">
+            <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg>
+            <div class="empty__title">No work items yet</div>
+            <div class="empty__text">Create your first work item to start the lifecycle.</div>
+            <button class="btn btn--primary">New Work Item</button>
+          </div>
+        </div></div>
+        <div class="panel"><div class="panel__body">
+          <span class="t-label">Skeleton loader</span>
+          <div class="skeleton skeleton--title" style="margin-top:var(--space-3)"></div>
+          <div class="skeleton skeleton--line"></div>
+          <div class="skeleton skeleton--line" style="width:80%"></div>
+          <div class="skeleton skeleton--block" style="margin-top:var(--space-3)"></div>
+        </div></div>
+      </div>
+    </section>
+
+    <!-- BATCH-1 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Navigation &amp; meta · breadcrumb, meta-row, key/value</h2></div>
+      <div class="panel__body u-stack">
+        <nav class="breadcrumb"><a href="#">Work Items</a><span class="sep">›</span><span class="here">WI-492</span></nav>
+        <div class="meta-row">
+          <span class="meta-item">Created <strong>2d ago</strong></span>
+          <span class="meta-item">Owner <strong>Sarah Chen</strong></span>
+          <span class="meta-item"><span class="sor-chip sor-chip--jira"><span class="sor-chip__glyph">J</span>STR-14</span></span>
+        </div>
+        <dl class="kv">
+          <dt>Domain</dt><dd>Payments</dd>
+          <dt>Tech stack</dt><dd>Django, React, Postgres</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Connect-your-machine · token reveal, terminal block, status strip</h2></div>
+      <div class="panel__body u-stack">
+        <div class="token-reveal"><span>rnr_3f9a…b2</span><span class="u-spacer"></span><button class="cmd-copy">Copy</button></div>
+        <div class="cmd-block">
+          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>claude</span><button class="cmd-copy">Copy</button></div>
+          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
+        </div>
+        <div class="conn-status conn-status--waiting"><span class="spinner"></span>Waiting for first check-in — run the command above…</div>
+        <div class="conn-status conn-status--connected"><span class="status-dot" style="background:currentColor"></span>Connected — Sarah's MacBook · last seen just now</div>
+        <div class="conn-status conn-status--offline"><span class="status-dot" style="background:currentColor"></span>Offline — last seen 5m ago · restart the daemon</div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Vertical stepper · onboarding stages / connect steps</h2></div>
+      <div class="panel__body">
+        <div class="vstep vstep--done"><span class="vstep__num">✓</span><div class="vstep__body"><div class="vstep__title">Upload resources</div><div class="vstep__desc">3 documents extracted into reviewable drafts.</div></div></div>
+        <div class="vstep vstep--running"><span class="vstep__num">2</span><div class="vstep__body"><div class="vstep__title">Index code</div><div class="vstep__desc">Indexing acme/payments-api…</div></div></div>
+        <div class="vstep"><span class="vstep__num">3</span><div class="vstep__body"><div class="vstep__title">Gap report</div><div class="vstep__desc">Runs once indexing completes.</div></div></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Dashboard · stat tiles, "needs me" todos, segmented toggle, dropzone</h2></div>
+      <div class="panel__body u-stack">
+        <div class="u-row"><span class="t-label">View</span>
+          <span class="segmented"><button aria-pressed="true">Board</button><button>List</button></span>
+        </div>
+        <div class="grid grid--3">
+          <div class="tile"><div class="tile__num">2</div><div class="tile__label">Gates need you</div><div class="tile__sub">required role: architect, product_owner</div></div>
+          <div class="tile"><div class="tile__num">1</div><div class="tile__label">Question awaiting you</div><div class="tile__sub">WI-510 · Requirements</div></div>
+          <div class="tile"><div class="tile__num">3</div><div class="tile__label">My runs in flight</div><div class="tile__sub">1 running · 2 awaiting gate</div></div>
+        </div>
+        <div class="card"><div class="panel__body--flush">
+          <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">Architecture gate · WI-492 Stripe Webhook Integration</div><div class="todo__meta">required role: architect · Run #42</div></div><button class="btn btn--primary btn--sm">Review</button></div>
+          <div class="todo"><span class="todo__icon todo__icon--clar">?</span><div class="todo__main"><div class="todo__title">Question · WI-510 Analytics Dashboard PRD</div><div class="todo__meta">waiting 6m · $0 while waiting</div></div><button class="btn btn--secondary btn--sm">Answer</button></div>
+          <div class="todo"><span class="todo__icon todo__icon--run">▶</span><div class="todo__main"><div class="todo__title">Run #44 · UX Design running</div><div class="todo__meta">WI-487 Checkout Flow Redesign</div></div><button class="btn btn--ghost btn--sm">View</button></div>
+        </div></div>
+        <div class="dropzone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 20h14"/></svg>
+          <div class="t-body u-strong">Drag &amp; drop documents</div>
+          <div class="t-sm u-muted">.docx · .pdf · .xlsx — or <a href="#">browse</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Gap report · assessment cells + resume row</h2></div>
+      <div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Lifecycle phase</th><th>Assessment</th><th>Evidence</th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">Ideation</td><td><span class="assess assess--complete">✓ Complete</span></td><td>Vision doc uploaded</td></tr>
+            <tr><td class="table__primary">Requirements</td><td><span class="assess assess--complete">✓ Complete</span></td><td>From uploaded spec</td></tr>
+            <tr><td class="table__primary">PRD</td><td><span class="assess assess--partial">~ Partial</span></td><td>Draft only, ungated</td></tr>
+            <tr class="row--resume"><td class="table__primary">Architecture</td><td><span class="assess assess--missing">✗ Missing</span></td><td><strong>Resume here</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- BATCH-2 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Banners · offline / permission / read-only / drift</h2></div>
+      <div class="panel__body u-stack">
+        <div class="banner banner--warning"><span class="banner__icon">⚠</span><div class="banner__body"><div class="banner__title">Your machine isn't connected</div>Phases can't run until you connect your machine. <a href="S-06-connect-machine.html">Connect your machine ↗</a></div></div>
+        <div class="banner banner--info"><span class="banner__icon">🔒</span><div class="banner__body"><div class="banner__title">Read-only — awaiting architect</div>Only a user holding the <strong>architect</strong> role can decide this gate. Marcus Lee can act.</div></div>
+        <div class="banner banner--danger"><span class="banner__icon">▣</span><div class="banner__body"><div class="banner__title">Breaking change detected</div>Payments API v2.0.0 impacts acme/payments-web (3 consumers).</div></div>
+        <div class="banner banner--purple"><span class="banner__icon">⏸</span><div class="banner__body">Paused — no usage billed while waiting.</div></div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Artifact preview · read-only doc, diagram frame, version history</h2></div>
+      <div class="panel__body">
+        <div class="grid grid--2">
+          <div>
+            <div class="doc-preview prose">
+              <h1>PRD: Stripe Webhook Integration</h1>
+              <h2>Goal</h2>
+              <p>Reconcile asynchronous Stripe payment events into the gateway ledger with signature verification and idempotent processing.</p>
+              <ul><li>Charge succeeded / failed</li><li>Dispute created</li></ul>
+              <p>Endpoint must ack within <code>500ms</code>.</p>
+            </div>
+            <div class="diagram-frame" style="margin-top:var(--space-4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg><span class="t-sm">System Sequence Diagram · Figma embed</span></div>
+          </div>
+          <div>
+            <h3 class="t-h3" style="margin-bottom:var(--space-2)">Version history</h3>
+            <div class="version-row"><span class="version-row__tag">v1.2</span><span class="t-sm u-strong">Current · Published</span><span class="u-spacer"></span><span class="t-xs u-muted">Sarah Chen · 2d ago</span></div>
+            <div class="version-row"><span class="version-row__tag">v1.1</span><span class="t-sm">Draft</span><span class="u-spacer"></span><span class="t-xs u-muted">AI run #41 · 3d ago</span></div>
+            <div class="version-row"><span class="version-row__tag">v1.0</span><span class="t-sm">Draft</span><span class="u-spacer"></span><span class="t-xs u-muted">AI run #38 · 4d ago</span></div>
+            <div class="banner banner--info" style="margin-top:var(--space-4)"><span class="banner__icon">ℹ</span><div class="banner__body">Bodies are read-through from the system-of-record — preview is never an editor.</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Traceability · graph legend</h2></div>
+      <div class="panel__body">
+        <div class="graph-legend">
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--success)"></span>Published</span>
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--warning)"></span>Pending gate</span>
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--info)"></span>Draft</span>
+          <span class="graph-legend__item"><span class="graph-legend__dot" style="background:var(--border-strong)"></span>derives / implements / tests</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- BATCH-3 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Capability tiles · integrations grid</h2></div>
+      <div class="panel__body">
+        <div class="grid grid--3">
+          <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--confluence">C</span><div><div class="cap-card__cap">Documentation store</div><div class="cap-card__vendor">Confluence</div></div></div><div class="cap-card__foot"><span class="badge badge--done"><span class="status-dot"></span>Connected</span><span class="u-spacer"></span><button class="btn btn--ghost btn--sm">Manage</button></div></div>
+          <div class="cap-card"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--empty">X</span><div><div class="cap-card__cap">Test management</div><div class="cap-card__vendor">Not connected</div></div></div><div class="cap-card__foot"><span class="badge badge--queued"><span class="status-dot"></span>Not connected</span><span class="u-spacer"></span><button class="btn btn--primary btn--sm">Connect</button></div></div>
+          <div class="cap-card cap-card--failed"><div class="cap-card__head"><span class="cap-card__logo cap-card__logo--github">G</span><div><div class="cap-card__cap">Code host</div><div class="cap-card__vendor">GitHub</div></div></div><div class="cap-card__foot"><span class="badge badge--failed"><span class="status-dot"></span>Failed</span><span class="u-spacer"></span><button class="btn btn--secondary btn--sm">Fix</button></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Toggle switch &amp; save-state indicator</h2></div>
+      <div class="panel__body u-stack">
+        <div class="u-row u-wrap">
+          <label class="switch"><input type="checkbox" checked aria-label="On"><span class="switch__track"></span><span class="switch__thumb"></span></label>
+          <label class="switch"><input type="checkbox" aria-label="Off"><span class="switch__track"></span><span class="switch__thumb"></span></label>
+          <span class="t-sm u-muted">role on / off</span>
+        </div>
+        <div class="u-row u-wrap">
+          <span class="save-state save-state--saved">✓ Saved · v3</span>
+          <span class="save-state save-state--dirty">● Unsaved changes</span>
+          <span class="save-state save-state--saving">⟳ Saving…</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Right-side drawer</h2></div>
+      <div class="panel__body--flush">
+        <div class="drawer">
+          <div class="drawer__panel">
+            <div class="drawer__header"><h3 class="drawer__title">Invite teammate</h3><button class="modal__close" aria-label="Close">✕</button></div>
+            <div class="drawer__body">
+              <label class="field"><span class="field__label">Work email</span><input class="input" value="raj@acme.com"></label>
+              <label class="field"><span class="field__label">Initial project</span><select class="select"><option>Payment Gateway v2</option></select></label>
+              <label class="field" style="margin-bottom:0"><span class="field__label">Role</span><select class="select"><option>engineer</option></select></label>
+            </div>
+            <div class="drawer__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary">Send invite</button></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Matrix table · toggle cells, sticky first column</h2></div>
+      <div class="panel__body--flush" style="overflow-x:auto">
+        <table class="table table--in-panel table--matrix">
+          <thead><tr><th>User</th><th>PO</th><th>Arch</th><th>Design</th><th>Reviewer</th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">Sarah Chen</td><td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+            <tr><td class="table__primary">Marcus Lee</td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td><td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- BATCH-4 ADDITIONS -->
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Auth split-panel (unauthenticated — no app shell)</h2></div>
+      <div class="panel__body--flush">
+        <div class="auth">
+          <div class="auth__brand">
+            <div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div>
+            <div class="auth__tagline">Run your whole software lifecycle with AI — and human approval gates.</div>
+            <div class="auth__sub">Your trusted partner from idea to production.</div>
+          </div>
+          <div class="auth__form">
+            <div class="auth-card">
+              <h2 class="auth-card__title">Log in</h2>
+              <p class="auth-card__sub">Welcome back to Acme Corp.</p>
+              <label class="field"><span class="field__label">Work email</span><input class="input" value="sarah@acme.com"></label>
+              <label class="field"><span class="field__label">Password</span><input class="input" type="password" value="••••••••"></label>
+              <button class="btn btn--primary btn--block">Log in</button>
+              <div class="auth-card__foot"><a href="#">Forgot password?</a></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Run transcript · agent / tool / human turns (read-only)</h2></div>
+      <div class="panel__body">
+        <div class="transcript">
+          <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Compiling requirements from the approved Requirements artifact…</div></div>
+          <div class="turn turn--tool"><span class="turn__role">Tool</span><div class="turn__body">docstore.read("PRD: Stripe Webhook Integration") → ok (4.1 KB)</div></div>
+          <div class="turn turn--human"><span class="turn__role">You</span><div class="turn__body">Answered "Target Confluence space?" → <strong>PAY</strong><div class="turn__meta">Sarah Chen · 10:42 · paused $0 while waiting</div></div></div>
+          <div class="turn turn--agent"><span class="turn__role">Agent</span><div class="turn__body">Run completed. Artifact registered as draft v0.9.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-bottom:var(--space-6)">
+      <div class="panel__header"><h2 class="panel__title">Page screenshot · fit / actual size / missing</h2></div>
+      <div class="panel__body">
+        <p class="t-sm u-muted" style="margin-bottom:var(--space-4)">A captured page is routinely 2560px wide and taller than the viewport. <strong>Fit</strong> shows the whole thing scaled, to judge layout; <strong>actual size</strong> scrolls inside the frame at 1:1, to judge the things that cannot be judged on a scaled image — contrast, focus rings, text size. The marker travels with the scroll.</p>
+        <div class="grid grid--2">
+          <div class="shot">
+            <div class="shot__stage shot__stage--fit">
+              <div class="shot__img shot__img--sample"></div>
+              <span class="shot__marker" data-label="button.checkout" style="top:96px;left:22%;width:132px;height:34px"></span>
+            </div>
+            <div class="shot__bar"><span>Fit to width</span><span class="u-spacer"></span><span class="shot__dims">2560 × 1340</span></div>
+          </div>
+          <div class="shot">
+            <div class="shot__stage">
+              <div class="shot__img shot__img--sample shot__img--sample-wide"></div>
+              <span class="shot__marker" data-label="button.checkout" style="top:96px;left:520px;width:132px;height:34px"></span>
+            </div>
+            <div class="shot__bar"><span>Actual size · scroll to see the rest</span><span class="u-spacer"></span><span class="shot__dims">2560 × 1340</span></div>
+          </div>
+        </div>
+        <div class="grid grid--2" style="margin-top:var(--space-4)">
+          <div class="shot">
+            <div class="shot__stage">
+              <div class="shot__img shot__img--sample shot__img--sample-tall"></div>
+              <span class="shot__marker" data-label="a.skip-link" style="top:640px;left:6%;width:150px;height:28px"></span>
+            </div>
+            <div class="shot__bar"><span>Tall page · the frame scrolls, the panel does not</span><span class="u-spacer"></span><span class="shot__dims">1440 × 8200</span></div>
+          </div>
+          <div class="shot shot--missing">
+            <div class="shot__stage">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 15l5-4 4 3 3-2 6 5"/><path d="M3 3l18 18"/></svg>
+              <span class="t-sm">No screenshot was captured for this finding</span>
+            </div>
+            <div class="shot__bar"><span>Missing · judge from the element and evidence below</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("dashboard", { navId: "dashboard" });</script>
+</body>
+</html>

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-02 · Log in — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- ============ Default ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Welcome back.</div><div class="auth__sub">Pick up your lifecycle where you left off.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Log in</h1>
+          <p class="auth-card__sub">Welcome back.</p>
+          <label class="field"><span class="field__label">Work email</span><input class="input" type="email" placeholder="you@company.com"></label>
+          <label class="field" style="margin-bottom:var(--space-2)"><span class="field__label">Password</span><input class="input" type="password" placeholder="Your password"></label>
+          <div style="text-align:right;margin-bottom:var(--space-4)"><a href="S-04-reset-password.html" class="t-sm">Forgot password?</a></div>
+          <button class="btn btn--primary btn--block">Log in</button>
+          <div class="auth-card__foot">New to Edvensoft? <a href="S-01-signup.html">Create a workspace</a></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Invalid credentials ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Invalid credentials</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Welcome back.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Log in</h1>
+          <div class="banner banner--danger" style="margin:var(--space-3) 0"><span class="banner__icon">✕</span><div class="banner__body">Email or password is incorrect.</div></div>
+          <label class="field"><span class="field__label">Work email</span><input class="input" type="email" value="sarah@acme.com"></label>
+          <label class="field field--error"><span class="field__label">Password</span><input class="input" type="password" value="••••" aria-invalid="true"><span class="field__error">Incorrect password.</span></label>
+          <button class="btn btn--primary btn--block">Log in</button>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Locked / too many attempts ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Locked · too many attempts</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Welcome back.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Log in</h1>
+          <div class="banner banner--warning" style="margin:var(--space-3) 0"><span class="banner__icon">🔒</span><div class="banner__body"><div class="banner__title">Too many attempts</div>Your account is locked for 15 minutes. Reset your password to regain access sooner.</div></div>
+          <a href="S-04-reset-password.html" class="btn btn--secondary btn--block">Reset password</a>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Submitting ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Submitting</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Welcome back.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Log in</h1>
+          <p class="auth-card__sub">Signing you in…</p>
+          <button class="btn btn--primary btn--block" disabled aria-disabled="true"><span class="spinner"></span> Logging in…</button>
+        </div></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+</body>
+</html>

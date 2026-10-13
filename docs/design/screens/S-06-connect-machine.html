@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-06 · Connect Your Machine — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:840px">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Connect your machine</h1>
+        <p class="page-head__sub">Phases run on <strong>your computer</strong> using your Claude Code subscription — no API key, no usage billed to the workspace. Two one-time steps, like pairing a device.</p>
+      </div>
+    </div>
+
+    <!-- ============ Not started ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Not started</span>
+      <div class="u-stack">
+        <div class="card"><div class="card__body">
+          <div class="vstep" style="padding-bottom:0">
+            <span class="vstep__num">A</span>
+            <div class="vstep__body">
+              <div class="vstep__title">In the app — generate an enrollment token</div>
+              <div class="vstep__desc">Pick the projects this machine will run phases for, then generate a one-time token.</div>
+              <div style="margin-top:var(--space-4);max-width:360px">
+                <label class="field" style="margin-bottom:var(--space-3)">
+                  <span class="field__label">Projects</span>
+                  <select class="select" multiple size="2" aria-label="Projects"><option selected>Payment Gateway v2</option><option>Legacy Billing</option></select>
+                </label>
+                <button class="btn btn--primary">Generate enrollment token</button>
+              </div>
+            </div>
+          </div>
+        </div></div>
+
+        <div class="card"><div class="card__body">
+          <div class="vstep" style="padding-bottom:0">
+            <span class="vstep__num">B</span>
+            <div class="vstep__body">
+              <div class="vstep__title">In your terminal — sign in &amp; start the companion</div>
+              <div class="vstep__desc">Paste these two commands. Sign in once, then leave the companion running in the background.</div>
+              <div class="cmd-block" style="margin-top:var(--space-4);opacity:.55">
+                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>claude</span><button class="cmd-copy" disabled>Copy</button></div>
+                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url … --tenant … --token …</span><button class="cmd-copy" disabled>Copy</button></div>
+              </div>
+              <p class="field__help">Generate the token in Step A to reveal these commands.</p>
+            </div>
+          </div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Token generated · awaiting first check-in ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Token generated · awaiting first check-in</span>
+      <div class="u-stack">
+        <div class="card"><div class="card__body">
+          <div class="vstep vstep--done" style="padding-bottom:0">
+            <span class="vstep__num">✓</span>
+            <div class="vstep__body">
+              <div class="vstep__title">Token generated</div>
+              <div class="vstep__desc">Copy it now — for security it's shown only once.</div>
+              <div class="token-reveal" style="margin-top:var(--space-3);max-width:420px"><span>rnr_3f9a…b2</span><span class="u-spacer"></span><button class="cmd-copy">Copy</button></div>
+            </div>
+          </div>
+        </div></div>
+
+        <div class="card"><div class="card__body">
+          <div class="vstep vstep--active" style="padding-bottom:0">
+            <span class="vstep__num">B</span>
+            <div class="vstep__body">
+              <div class="vstep__title">Run these in your terminal</div>
+              <div class="vstep__desc">Leave the second command running in the background.</div>
+              <div class="cmd-block" style="margin-top:var(--space-4)">
+                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>claude</span><button class="cmd-copy">Copy</button></div>
+                <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url https://app.edvensoft.com --tenant tnt_8a2f… --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
+              </div>
+            </div>
+          </div>
+        </div></div>
+
+        <div class="conn-status conn-status--waiting"><span class="spinner"></span>Waiting for first check-in — run the command above…</div>
+      </div>
+    </div>
+
+    <!-- ============ Connected ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Connected</span>
+      <div class="card"><div class="card__body">
+        <div class="conn-status conn-status--connected" style="margin-bottom:var(--space-4)"><span class="status-dot" style="background:currentColor"></span>Connected — <strong style="margin:0 4px">Sarah's MacBook</strong> · last seen just now</div>
+        <p class="t-sm u-body">Your machine is ready. Trigger phases from any work item — they'll run here. Keep the <code class="t-mono">serve</code> command running; it reconnects automatically.</p>
+        <div class="gate-panel__actions"><a href="S-14-work-items-board.html" class="btn btn--primary">Go to Work Items</a><button class="btn btn--secondary">Disconnect machine</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Previously connected · now offline ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Previously connected · now offline</span>
+      <div class="card"><div class="card__body">
+        <div class="conn-status conn-status--offline" style="margin-bottom:var(--space-4)"><span class="status-dot" style="background:currentColor"></span>Offline — Sarah's MacBook · last seen 5m ago</div>
+        <p class="t-sm u-body">The companion daemon stopped. Phases can't run until it's back. Restart it in your terminal:</p>
+        <div class="cmd-block" style="margin-top:var(--space-3)">
+          <div class="cmd-row"><span class="cmd-row__text"><span class="prompt">$ </span>python -m runner.companion serve --api-url https://app.edvensoft.com --tenant tnt_8a2f… --token rnr_3f9a…b2</span><button class="cmd-copy">Copy</button></div>
+        </div>
+        <div class="gate-panel__actions"><button class="btn btn--secondary">Generate new token</button></div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("integrations", { companion: "offline", bell: 4 });</script>
+</body>
+</html>

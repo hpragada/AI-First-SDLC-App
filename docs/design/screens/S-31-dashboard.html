@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-31 · Workspace Dashboard — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- ============ Busy (default landing) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Busy · lots needs me</span>
+      <div class="page-head">
+        <div class="page-head__titles">
+          <h1 class="t-h1">Good morning — here's what needs you</h1>
+          <p class="page-head__sub">Payment Gateway v2 · your runs, gates, and questions in one place.</p>
+        </div>
+        <span class="u-row-tight"><button class="btn btn--secondary">Trigger phase</button><button class="btn btn--primary">+ New Work Item</button></span>
+      </div>
+
+      <div class="grid grid--3" style="margin-bottom:var(--space-5)">
+        <div class="tile"><div class="tile__num">2</div><div class="tile__label">Gates need your approval</div><div class="tile__sub">required role: architect</div></div>
+        <div class="tile"><div class="tile__num">1</div><div class="tile__label">Question awaiting you</div><div class="tile__sub">$0 while waiting</div></div>
+        <div class="tile"><div class="tile__num">3</div><div class="tile__label">My runs in flight</div><div class="tile__sub">1 running · 2 awaiting gate</div></div>
+      </div>
+
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Needs me</h2><span class="u-spacer"></span><span class="badge badge--orange">6 items</span></div>
+          <div class="panel__body--flush">
+            <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">Architecture gate · WI-492 Stripe Webhook Integration</div><div class="todo__meta">required role: Architect · Run #42 awaiting gate</div></div><a href="S-21-gates.html" class="btn btn--primary btn--sm">Review</a></div>
+            <div class="todo"><span class="todo__icon todo__icon--gate">▲</span><div class="todo__main"><div class="todo__title">PM Approval gate · WI-511 Fix Session Timeout Logic</div><div class="todo__meta">required role: Product Owner · Run #39 awaiting gate</div></div><a href="S-21-gates.html" class="btn btn--secondary btn--sm">Review</a></div>
+            <div class="todo"><span class="todo__icon todo__icon--clar">?</span><div class="todo__main"><div class="todo__title">Question · WI-510 Analytics Dashboard PRD</div><div class="todo__meta">"CSV export in v1?" · waiting 6m · $0 while waiting</div></div><a href="S-20-clarifications.html" class="btn btn--secondary btn--sm">Answer</a></div>
+            <div class="todo"><span class="todo__icon todo__icon--run">▶</span><div class="todo__main"><div class="todo__title">Run #44 · UX Design running</div><div class="todo__meta">WI-487 Checkout Flow Redesign</div></div><a href="S-19-run-console.html" class="btn btn--ghost btn--sm">View</a></div>
+          </div>
+        </div>
+
+        <div class="u-stack">
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3" style="margin-bottom:var(--space-3)">Companion</h3>
+            <div class="conn-status conn-status--connected"><span class="status-dot" style="background:currentColor"></span>Connected — Sarah's MacBook</div>
+            <p class="field__help">Phases run on your machine. Keep it online.</p>
+          </div></div>
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3" style="margin-bottom:var(--space-3)">Project health</h3>
+            <dl class="kv" style="grid-template-columns:1fr auto">
+              <dt>Work items</dt><dd>18</dd>
+              <dt>Phases in progress</dt><dd>3</dd>
+              <dt>Awaiting gate</dt><dd>2</dd>
+              <dt>Published this week</dt><dd>5</dd>
+            </dl>
+          </div></div>
+          <div class="card"><div class="card__body">
+            <h3 class="t-h3" style="margin-bottom:var(--space-3)">Recent publishes</h3>
+            <div class="u-stack" style="--space-4:8px">
+              <div class="u-row-tight"><span class="badge badge--done"><span class="status-dot"></span>Published</span><span class="t-sm">PRD: Stripe Webhook v1.2</span></div>
+              <div class="u-row-tight"><span class="badge badge--done"><span class="status-dot"></span>Published</span><span class="t-sm">Multi-Currency Requirements</span></div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Calm ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Calm · nothing needs me</span>
+      <div class="grid grid--3" style="margin-bottom:var(--space-5)">
+        <div class="tile"><div class="tile__num">0</div><div class="tile__label">Gates need you</div><div class="tile__sub">all clear</div></div>
+        <div class="tile"><div class="tile__num">0</div><div class="tile__label">Questions awaiting you</div><div class="tile__sub">all answered</div></div>
+        <div class="tile"><div class="tile__num">1</div><div class="tile__label">My runs in flight</div><div class="tile__sub">1 running</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Needs me</h2></div>
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6L9 17l-5-5"/></svg>
+          <div class="empty__title">You're all caught up</div>
+          <div class="empty__text">No gates or questions need you right now. Trigger a phase or start a new work item.</div>
+          <span class="u-row-tight"><button class="btn btn--secondary">Trigger phase</button><button class="btn btn--primary">+ New Work Item</button></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ New project ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">New project · mostly empty + nudges</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Get started</h2></div>
+          <!-- Bugs.xlsx row 7: right after first login (no project yet) step 1 is the ACTIVE,
+               not-yet-done step (numbered 1) with a Create action — it is NOT pre-ticked. -->
+          <div class="panel__body">
+            <div class="vstep vstep--active"><span class="vstep__num">1</span><div class="vstep__body"><div class="vstep__title">Create your first project</div><div class="vstep__desc">Greenfield or brownfield — this is where work items live.</div><div class="gate-panel__actions" style="margin-top:var(--space-2)"><a href="S-09-create-project.html" class="btn btn--primary btn--sm">Create a project</a></div></div></div>
+            <div class="vstep"><span class="vstep__num">2</span><div class="vstep__body"><div class="vstep__title">Connect your machine</div><div class="vstep__desc">Phases run on your computer.</div></div></div>
+            <div class="vstep"><span class="vstep__num">3</span><div class="vstep__body"><div class="vstep__title">Invite your team &amp; assign roles</div><div class="vstep__desc">So gates have someone to decide them.</div></div></div>
+            <div class="vstep" style="padding-bottom:0"><span class="vstep__num">4</span><div class="vstep__body"><div class="vstep__title">Connect integrations</div><div class="vstep__desc">Confluence, Jira, Figma, GitHub…</div></div></div>
+          </div>
+        </div>
+        <div class="card"><div class="card__body">
+          <h3 class="t-h3" style="margin-bottom:var(--space-3)">Companion</h3>
+          <div class="conn-status conn-status--offline"><span class="status-dot" style="background:currentColor"></span>Not connected yet</div>
+          <p class="field__help">Connect your machine to run your first phase.</p>
+        </div></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("dashboard");</script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-28 · Artifacts Registry — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Artifacts</h1>
+        <p class="page-head__sub">The registry: pointers, versions, and system-of-record links — never artifact bodies. Preview opens read-only.</p>
+      </div>
+      <a href="S-30-traceability.html" class="btn btn--secondary">View traceability</a>
+    </div>
+
+    <!-- ============ Populated ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Populated</span>
+      <div class="u-row u-wrap" style="margin-bottom:var(--space-4)">
+        <input class="input" type="search" placeholder="Search artifacts…" style="max-width:240px" aria-label="Search artifacts">
+        <select class="select" style="max-width:150px" aria-label="Filter by phase"><option>Phase: All</option><option>Requirements</option><option>Architecture</option></select>
+        <select class="select" style="max-width:140px" aria-label="Filter by type"><option>Type: All</option><option>Document</option><option>Diagram</option></select>
+        <select class="select" style="max-width:150px" aria-label="Filter by status"><option>Status: All</option><option>Draft</option><option>Published</option></select>
+      </div>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Artifact</th><th>Phase</th><th>Version</th><th>Status</th><th>System of record</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td><div class="u-row-tight"><span class="artifact-row__icon" style="width:28px;height:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/></svg></span><span class="table__primary">PRD: Stripe Webhook Integration</span></div></td>
+              <td>Requirements</td><td class="table__id">v1.2</td>
+              <td><span class="badge badge--done"><span class="status-dot"></span>Published</span></td>
+              <td><a class="sor-chip sor-chip--confluence" href="S-29-artifact-preview.html"><span class="sor-chip__glyph">C</span>Confluence</a></td>
+              <td><button class="btn btn--ghost btn--sm">Preview</button></td>
+            </tr>
+            <tr>
+              <td><div class="u-row-tight"><span class="artifact-row__icon" style="width:28px;height:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></span><span class="table__primary">System Sequence Diagram</span></div></td>
+              <td>Architecture</td><td class="table__id">v0.9</td>
+              <td><span class="badge badge--gate"><span class="status-dot"></span>Pending gate</span></td>
+              <td><a class="sor-chip sor-chip--figma" href="S-29-artifact-preview.html"><span class="sor-chip__glyph">F</span>Figma</a></td>
+              <td><button class="btn btn--ghost btn--sm">Preview</button></td>
+            </tr>
+            <tr>
+              <td><div class="u-row-tight"><span class="artifact-row__icon" style="width:28px;height:28px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 2h9l5 5v15H6z"/></svg></span><span class="table__primary">Multi-Currency Requirements</span></div></td>
+              <td>Requirements</td><td class="table__id">v2.0</td>
+              <td><span class="badge badge--done"><span class="status-dot"></span>Published</span></td>
+              <td><a class="sor-chip sor-chip--confluence" href="S-29-artifact-preview.html"><span class="sor-chip__glyph">C</span>Confluence</a></td>
+              <td><button class="btn btn--ghost btn--sm">Preview</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Internal-only (no external link) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Internal-only · no external link</span>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Artifact</th><th>Phase</th><th>Version</th><th>Status</th><th>System of record</th><th></th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="table__primary">Ideation Brief — Loyalty Program</td>
+              <td>Ideation</td><td class="table__id">v0.3</td>
+              <td><span class="badge badge--info-hue"><span class="status-dot"></span>Draft</span></td>
+              <td><span class="t-xs u-muted">Platform only — not published</span></td>
+              <td><button class="btn btn--ghost btn--sm">Preview</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2h9l5 5v15H6z"/><path d="M9 12h6M9 16h6"/></svg>
+          <div class="empty__title">No artifacts yet</div>
+          <div class="empty__text">Run a phase to produce the first artifact. It registers here as a draft pointer until its gate is approved.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("artifacts");</script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+# ─── Secrets / env ───────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!deploy/shared-aws/.env.shared.example
+*.pem
+*.key
+
+# ─── Python ──────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.sqlite3
+
+# ─── Node / frontend ─────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ─── Docker / local volumes ──────────────────────────────────────
+.docker-data/
+*.local
+# …and the shell wrappers that drive them. `watch-loop.local.sh` runs `watch.local`, which is
+# ignored by the line above, so committing the wrapper alone would ship a script that cannot run.
+*.local.sh
+
+# ─── Editor / OS ─────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ─── Runner / ephemeral workdirs (local files are ephemeral) ─────
+runner/workdir/
+**/AGENTS.md.tmp
+*.log
+
+# Office temp lock files
+~$*
+
+# Claude Code: machine-local permission grants stay local; launch.json is shared
+.claude/settings.local.json
+
+# Spreadsheet backups made before XML-in-zip surgery on Bugs.xlsx — local only.
+*.bak

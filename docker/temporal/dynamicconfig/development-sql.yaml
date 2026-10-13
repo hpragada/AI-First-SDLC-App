@@ -1,0 +1,16 @@
+# Temporal dynamic config for local dev (auto-setup).
+# Minimal: rely on sane defaults. Add overrides here as needed.
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}
+
+# Worker Versioning. Off by default in the server, which is why a worker running
+# stale code could still take work off the queue. Both flags are needed: the
+# first turns on the build-ID registry APIs, the second lets task dispatch
+# actually honour a build ID.
+frontend.workerVersioningDataAPIs:
+  - value: true
+    constraints: {}
+frontend.workerVersioningWorkflowAPIs:
+  - value: true
+    constraints: {}

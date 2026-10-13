@@ -1,0 +1,23 @@
+{
+  "name": "meridian-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Checks that the Meridian Library fixture still holds the defects the golden dataset was labelled against. Edvensoft-internal \u2014 never ships with the app.",
+  "type": "commonjs",
+  "scripts": {
+    "check": "node check-contrast.js && node verify.js && node verify-plants.js && node verify-golden.js && node verify-selectable.js && node count-candidates.js && node verify-journeys.js && node audit.js",
+    "contrast": "node check-contrast.js",
+    "axe": "node verify.js",
+    "plants": "node verify-plants.js",
+    "counts": "node count-candidates.js",
+    "journeys": "node verify-journeys.js",
+    "audit": "node audit.js",
+    "golden": "node verify-golden.js",
+    "selectable": "node verify-selectable.js",
+    "selectors": "node dump-selectors.js"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "playwright": "^1.47.0"
+  }
+}

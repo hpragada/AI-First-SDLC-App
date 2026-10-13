@@ -1,0 +1,1453 @@
+{
+  "info": {
+    "_postman_id": "b0f3a2c1-7d4e-4c2a-9f61-0a1b2c3d4e5f",
+    "name": "AI-First SDLC Platform API",
+    "description": "Full REST surface for the AI-First SDLC Platform backend (Django 5 + DRF).\n\n---\n\n## Base URL\nAll routes are mounted under `/api/`. Set the `baseUrl` collection variable (default `http://localhost:8000`).\n\n## Authentication — three paths\nThe platform is multi-tenant. Every tenant-scoped request must carry a tenant context, resolved one of two ways:\n\n1. **Server session (browser path, primary).** `POST /api/auth/login` (or `/signup`, `/accept-invitation`) establishes a Django **session cookie** and stashes `tenant_id` in the session. Postman keeps the cookie automatically. Unsafe methods (POST/PUT/PATCH/DELETE) additionally require an **`X-CSRFToken`** header — the token comes from the `csrftoken` cookie set by `GET /api/auth/me`. **This collection wires both up for you:** a collection-level pre-request script injects `X-CSRFToken` from the cookie jar on every unsafe request, and the login/signup/me requests auto-capture `tenantId`/`userId` into collection variables.\n2. **`X-Tenant-ID` header (dev / testing path).** Most read + write endpoints default to `AllowAny` + tenant scoping, so you can hit them without a session by sending `X-Tenant-ID: <tenant uuid>`. The collection pre-request script attaches this header automatically whenever the `tenantId` variable is set. **Admin-only** endpoints (Users, Invitations, Integrations, and the project membership/role actions) and **member-only** endpoints (repositories, onboarding, dashboard, enrollment GET, artifact preview) still require a real **session** — the header alone is not enough for those.\n3. **Runner token (companion daemon path).** The `Runner — Companion` folder authenticates with `Authorization: Runner <token>` (set `runnerToken`). The signed GitHub webhook authenticates by HMAC signature instead.\n\n## Recommended first run\n1. `Auth → Signup` (creates a tenant + first admin, logs you in). `tenantId`/`userId` are captured automatically.\n2. `Auth → Get Current User (me)` — sets the CSRF cookie so subsequent writes succeed.\n3. `Projects → Create Project` — captures `projectId`.\n4. `Work Items → Create Work Item` — captures `workItemId`.\n5. Explore Trigger / Runs / Approvals / Clarifications from there.\n\n## Conventions\n- Trailing slashes are **required** (Django `APPEND_SLASH`).\n- IDs are UUIDs, carried in collection variables (`projectId`, `workItemId`, ...). Auto-capture scripts fill many of them from create responses.\n- Optional query-string filters are included on list endpoints as **disabled** params — enable them in the Params tab as needed.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Attach the tenant scoping header when a tenantId is set (dev/testing path;",
+          "// harmless to send alongside a real session).",
+          "const tid = pm.collectionVariables.get('tenantId');",
+          "if (tid) { pm.request.headers.upsert({ key: 'X-Tenant-ID', value: tid }); }",
+          "",
+          "// For unsafe methods, mirror Django's csrftoken cookie into X-CSRFToken so",
+          "// session-authenticated writes pass CSRF verification.",
+          "const unsafe = ['POST', 'PUT', 'PATCH', 'DELETE'];",
+          "if (unsafe.indexOf(pm.request.method) !== -1) {",
+          "  try {",
+          "    const jar = pm.cookies.jar();",
+          "    const base = pm.collectionVariables.get('baseUrl') || 'http://localhost:8000';",
+          "    jar.get(base, 'csrftoken', (err, value) => {",
+          "      if (!err && value) { pm.request.headers.upsert({ key: 'X-CSRFToken', value: value }); }",
+          "    });",
+          "  } catch (e) { /* cookie jar unavailable — session path not in use */ }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000", "type": "string" },
+    { "key": "tenantId", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "projectId", "value": "", "type": "string" },
+    { "key": "workItemId", "value": "", "type": "string" },
+    { "key": "runId", "value": "", "type": "string" },
+    { "key": "artifactId", "value": "", "type": "string" },
+    { "key": "traceEdgeId", "value": "", "type": "string" },
+    { "key": "eventId", "value": "", "type": "string" },
+    { "key": "approvalId", "value": "", "type": "string" },
+    { "key": "clarificationId", "value": "", "type": "string" },
+    { "key": "sourceDocumentId", "value": "", "type": "string" },
+    { "key": "invitationId", "value": "", "type": "string" },
+    { "key": "integrationId", "value": "", "type": "string" },
+    { "key": "driftId", "value": "", "type": "string" },
+    { "key": "membershipId", "value": "", "type": "string" },
+    { "key": "repositoryId", "value": "", "type": "string" },
+    { "key": "runnerId", "value": "", "type": "string" },
+    { "key": "runnerToken", "value": "", "type": "string" },
+    { "key": "contractArtifactId", "value": "", "type": "string" },
+    { "key": "invitationToken", "value": "", "type": "string" },
+    { "key": "resetToken", "value": "", "type": "string" },
+    { "key": "webhookTenantId", "value": "", "type": "string" },
+    { "key": "runnerTool", "value": "get_context", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness probe. DB-free by design — works before any tenant/RLS context exists.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/health/", "host": ["{{baseUrl}}"], "path": ["api", "health", ""] },
+            "description": "`GET /api/health/` → `{\"status\":\"ok\",\"service\":\"sdlc-platform-backend\"}`. No auth, no tenant, no DB."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "description": "Server-session auth (DECISION-3). Signup/login/accept-invitation establish a session cookie + stash `tenant_id`. All are CSRF-exempt (no session exists yet). `GET /me` sets the CSRF cookie the SPA (and this collection) uses for later unsafe requests.",
+      "item": [
+        {
+          "name": "Signup (new tenant + first admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.tenant && b.tenant.id) pm.collectionVariables.set('tenantId', b.tenant.id);",
+                  "  if (b.user && b.user.id) pm.collectionVariables.set('userId', b.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Ada Lovelace\",\n  \"email\": \"ada@example.com\",\n  \"password\": \"correct-horse-battery\",\n  \"org_name\": \"Analytical Engines Inc\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/auth/signup/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signup", ""] },
+            "description": "`POST /api/auth/signup/` — creates a brand-new tenant, its first admin user (`is_tenant_admin=true`), and logs you in. Returns the `/me` payload (`{user, tenant, memberships}`). **409** if the email already exists.\n\nPassword must be ≥ 8 chars. On success this request auto-captures `tenantId` and `userId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.tenant && b.tenant.id) pm.collectionVariables.set('tenantId', b.tenant.id);",
+                  "  if (b.user && b.user.id) pm.collectionVariables.set('userId', b.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"ada@example.com\",\n  \"password\": \"correct-horse-battery\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/auth/login/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login", ""] },
+            "description": "`POST /api/auth/login/` — `{email, password}` → session cookie + the `/me` payload. **401** on bad credentials. Auto-captures `tenantId`/`userId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Current User (me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.tenant && b.tenant.id) pm.collectionVariables.set('tenantId', b.tenant.id);",
+                  "  if (b.user && b.user.id) pm.collectionVariables.set('userId', b.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/auth/me/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "me", ""] },
+            "description": "`GET /api/auth/me/` — current user + tenant + per-project memberships. **401** if there's no session. **Sets the `csrftoken` cookie** — call this once after login so subsequent POST/PUT/PATCH/DELETE requests pass CSRF."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/auth/logout/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "logout", ""] },
+            "description": "`POST /api/auth/logout/` — clears the session. **204** No Content. CSRF-exempt."
+          },
+          "response": []
+        },
+        {
+          "name": "Accept Invitation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"token\": \"{{invitationToken}}\",\n  \"password\": \"new-user-password\",\n  \"name\": \"Grace Hopper\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/auth/accept-invitation/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "accept-invitation", ""] },
+            "description": "`POST /api/auth/accept-invitation/` — turns an invitation `token` into a real tenant User + its queued memberships, and logs them in. `name` optional (defaults to the invited name). Public + CSRF-exempt.\n\nStatus: **409** already used · **410** expired/revoked/invalid.\n\nThe raw token comes from the invitation email (console EmailBackend prints it in dev). Put it in the `invitationToken` variable."
+          },
+          "response": []
+        },
+        {
+          "name": "Request Password Reset",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"ada@example.com\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/auth/request-reset/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "request-reset", ""] },
+            "description": "`POST /api/auth/request-reset/` — always returns **200** regardless of whether the email exists (no account enumeration). The reset link/token is emailed (printed to the console in dev)."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"password\": \"a-brand-new-password\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/auth/reset/", "host": ["{{baseUrl}}"], "path": ["api", "auth", "reset", ""] },
+            "description": "`POST /api/auth/reset/` — `{token, password}` sets the new password. **200** on success · **410** invalid/expired token. Password ≥ 8 chars."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Tenants",
+      "description": "Tenant bootstrap — the one un-scoped write. Normally you create a tenant implicitly via Signup; this raw endpoint exists for provisioning/tests.",
+      "item": [
+        {
+          "name": "Create Tenant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('tenantId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Acme Corp\",\n  \"config\": {},\n  \"model_routing\": {}\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/tenants/", "host": ["{{baseUrl}}"], "path": ["api", "tenants", ""] },
+            "description": "`POST /api/tenants/` — create a tenant. No tenant context needed (this is the bootstrap write). Returns `{id, name, config, model_routing, created_at}`. Captures `tenantId`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Phases (catalog)",
+      "description": "The phase/agent catalog that drives the trigger picker.",
+      "item": [
+        {
+          "name": "List Phase Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/phases/", "host": ["{{baseUrl}}"], "path": ["api", "phases", ""] },
+            "description": "`GET /api/phases/` — tenant-scoped catalog returned as `{plan, build, remediation}` buckets. Each entry: `{key, label, agent_key, gate_role}`. Send `agent_key` in a Work Item **Trigger** body. Sourced from the tenant's seeded AgentSpecs; falls back to the in-code catalog if none are seeded. Tenant resolved from session or `X-Tenant-ID`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Projects",
+      "description": "Project CRUD (create/list/retrieve) plus a large set of custom actions: memberships & roles, profile, traceability, brownfield onboarding, repositories, API contracts/drift, and the dashboard rollup.\n\nAny authenticated member may create a project (the creator is auto-granted the `admin` project role). Membership/role actions require **tenant admin**; repository/onboarding/contract/dashboard actions require an authenticated **member** (session).",
+      "item": [
+        {
+          "name": "List Projects",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/", "host": ["{{baseUrl}}"], "path": ["api", "projects", ""] },
+            "description": "`GET /api/projects/` — tenant-scoped list, newest first. Fields: `id, name, track, repo_topology, status, created_at`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Project",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('projectId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Checkout Revamp\",\n  \"track\": \"greenfield\",\n  \"repo_topology\": \"single\",\n  \"status\": \"active\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/", "host": ["{{baseUrl}}"], "path": ["api", "projects", ""] },
+            "description": "`POST /api/projects/` — creates a project scoped to the current tenant. If a session user is present they're auto-granted the `admin` project role (so they can see/select it). Captures `projectId`.\n\nWritable: `name` (required), `track`, `repo_topology`, `status`. `id`/`created_at` are read-only."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Project",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", ""] },
+            "description": "`GET /api/projects/{id}/` — a single project."
+          },
+          "response": []
+        },
+        {
+          "name": "List Memberships (admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/memberships/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "memberships", ""] },
+            "description": "`GET /api/projects/{id}/memberships/` — the project's role grants (admin only). Each: `{id, user_id, project, role, created_at}`."
+          },
+          "response": []
+        },
+        {
+          "name": "Grant Membership (admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('membershipId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"user_id\": \"{{userId}}\",\n  \"role\": \"product_owner\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/memberships/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "memberships", ""] },
+            "description": "`POST /api/projects/{id}/memberships/` — grant a user a project role (admin only). `role` is one of the platform gate roles (e.g. `admin`, `product_owner`, `tech_lead`, `architect`, `qa`, `developer`, `designer`). `role=\"admin\"` grants a project-admin who can approve any gate. Captures `membershipId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Membership (admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/memberships/{{membershipId}}/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "memberships", "{{membershipId}}", ""] },
+            "description": "`DELETE /api/projects/{id}/memberships/{mid}/` — revoke a project-role grant (admin only). **204** on success."
+          },
+          "response": []
+        },
+        {
+          "name": "Role Coverage (admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/role-coverage/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "role-coverage", ""] },
+            "description": "`GET /api/projects/{id}/role-coverage/` — per gate role: holders, whether covered, whether a gate would be blocked (+ note), and whether an admin fallback exists. (admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Project Profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/profile/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "profile", ""] },
+            "description": "`GET /api/projects/{id}/profile/` — the project's 1:1 ProjectProfile (the manifest source). **404** if not created yet."
+          },
+          "response": []
+        },
+        {
+          "name": "Upsert Project Profile",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"description\": \"Rebuild the checkout flow for speed and accessibility.\",\n  \"domain\": \"e-commerce\",\n  \"tech_stack\": [\"python\", \"django\", \"react\"],\n  \"coding_standards\": \"PEP8 + ruff; TS strict.\",\n  \"nfrs\": [\"p95 < 200ms\", \"WCAG 2.2 AA\"],\n  \"constraints\": [\"no PII in logs\"],\n  \"glossary\": {\"SoR\": \"System of Record\"},\n  \"important_context\": \"Payment provider migration in flight.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/profile/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "profile", ""] },
+            "description": "`PUT /api/projects/{id}/profile/` — create (**201**) or update (**200**) the 1:1 profile; each edit bumps `version`. Partial payloads are accepted (only supplied fields change). `project`/`version`/`id` are read-only. A request that sends `description` must send non-blank text: a blank or whitespace-only description is refused with **400** `{\"description\": [\"A description is required — agents rely on it for every phase.\"]}`. A partial payload that omits `description` is not affected."
+          },
+          "response": []
+        },
+        {
+          "name": "Traceability Graph",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/traceability/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "traceability", ""] },
+            "description": "`GET /api/projects/{id}/traceability/` — lineage graph: `{nodes, edges}`. Nodes are artifacts (with SoR pointer/url for deep-linking); edges are TraceEdges (`{from, to, rel}`). Each node: `id, kind, phase, type, title, status, sor, external_ref, url, work_item, work_item_key, work_item_title`. The three `work_item*` fields name the work item whose run produced the artifact; they are `null`/`\"\"` for documents adopted during onboarding (no run)."
+          },
+          "response": []
+        },
+        {
+          "name": "List Source Documents (of project)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/source-documents/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "source-documents", ""] },
+            "description": "`GET /api/projects/{id}/source-documents/` — brownfield-lite uploads for this project, newest first."
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Source Document",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [] },
+                { "key": "artifact_type", "value": "document", "type": "text" }
+              ]
+            },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/source-documents/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "source-documents", ""] },
+            "description": "`POST /api/projects/{id}/source-documents/` — **multipart** upload of a static file for brownfield extraction. Form fields: `file` (required — pick a file in the Body tab), `artifact_type` (optional, default `document`). Returns the ingest result. Extraction failures → **400**."
+          },
+          "response": []
+        },
+        {
+          "name": "Onboard Atlassian (register, don't recreate)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/onboard-atlassian/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "onboard-atlassian", ""] },
+            "description": "`POST /api/projects/{id}/onboard-atlassian/` — registers existing Confluence/Jira content as SoR rather than recreating it. **400** if the Atlassian capability isn't configured for the tenant."
+          },
+          "response": []
+        },
+        {
+          "name": "Onboarding Hub (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/onboarding/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "onboarding", ""] },
+            "description": "`GET /api/projects/{id}/onboarding/` — the brownfield onboarding hub state (upload/adopt/register/index/gap in one read). Authenticated member."
+          },
+          "response": []
+        },
+        {
+          "name": "Index Code Intel (tech_lead/admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"repo_id\": \"{{repositoryId}}\",\n  \"index\": {\"modules\": [], \"entrypoints\": []},\n  \"summary\": \"Monolith with a thin service layer.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/code-intel/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "code-intel", ""] },
+            "description": "`POST /api/projects/{id}/code-intel/` — persist an **already-computed** code-intel result as a `codebase_intelligence` artifact + knowledge chunk. **202** Accepted. Requires repo-manage role (tech_lead/admin) on the project. `repo_id` must be a registered repository. **404** for an unknown repo."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Gap Report (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/gap-report/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "gap-report", ""] },
+            "description": "`GET /api/projects/{id}/gap-report/` — the latest gap report (read-through, no recompute). **404** if none built yet."
+          },
+          "response": []
+        },
+        {
+          "name": "Build Gap Report (member)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/gap-report/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "gap-report", ""] },
+            "description": "`POST /api/projects/{id}/gap-report/` — (re)build the gap report from currently registered evidence, then returns it (**200**), same shape as GET."
+          },
+          "response": []
+        },
+        {
+          "name": "List API Contracts (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/api-contracts/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "api-contracts", ""] },
+            "description": "`GET /api/projects/{id}/api-contracts/` — the project's registered API contract artifact(s)."
+          },
+          "response": []
+        },
+        {
+          "name": "API Contract Detail (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/api-contracts/{{contractArtifactId}}/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "api-contracts", "{{contractArtifactId}}", ""] },
+            "description": "`GET /api/projects/{id}/api-contracts/{aid}/` — the contract's current rendered body, read-through from S3. **404** if there's no body."
+          },
+          "response": []
+        },
+        {
+          "name": "Drift Queue (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/drift/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "drift", ""] },
+            "description": "`GET /api/projects/{id}/drift/` — the open drift queue with cross-repo change-impact for this project."
+          },
+          "response": []
+        },
+        {
+          "name": "Dashboard Rollup (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/dashboard/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "dashboard", ""] },
+            "description": "`GET /api/projects/{id}/dashboard/` — `needs_me` (pending gates, clarifications, my runs) + `health` counters + `recent_publishes`, scoped to this project and the current user. **Personalised:** `needs_me.gates` lists only gates the signed-in user may decide (admins see all); `needs_me.clarifications` lists pending questions only if the user is a member of the project; `needs_me.my_runs` are the user's own running / awaiting-gate runs. Lists are trimmed (20 / 20 / 10; gates and questions oldest first), but `needs_me.counts` (`gates, clarifications, my_runs`) are **uncapped** true totals. Gate, question and run rows each carry `work_item, work_item_key, work_item_title`; run rows also carry `started_s` (seconds since the run was created). `health.published_week` and `recent_publishes` go by `published_at` (when it was published), not the draft date. With no signed-in user every `needs_me` list is empty."
+          },
+          "response": []
+        },
+        {
+          "name": "List Repositories (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/repositories/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "repositories", ""] },
+            "description": "`GET /api/projects/{id}/repositories/` — `{repo_topology, repositories}`. Any authenticated member."
+          },
+          "response": []
+        },
+        {
+          "name": "Register Repository (tech_lead/admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('repositoryId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"checkout-service\",\n  \"role\": \"backend\",\n  \"base_branch\": \"main\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/repositories/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "repositories", ""] },
+            "description": "`POST /api/projects/{id}/repositories/` — register a repo (tech_lead/admin). `name` required; `role` optional; `base_branch` defaults to `main`. **409** on a duplicate name. Captures `repositoryId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Repository (tech_lead/admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/repositories/{{repositoryId}}/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "repositories", "{{repositoryId}}", ""] },
+            "description": "`DELETE /api/projects/{id}/repositories/{rid}/` — remove a repo; reconciles topology + default. **204**. (tech_lead/admin)"
+          },
+          "response": []
+        },
+        {
+          "name": "Set Repository Default (tech_lead/admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/projects/{{projectId}}/repositories/{{repositoryId}}/set-default/", "host": ["{{baseUrl}}"], "path": ["api", "projects", "{{projectId}}", "repositories", "{{repositoryId}}", "set-default", ""] },
+            "description": "`POST /api/projects/{id}/repositories/{rid}/set-default/` — make this repo the project's default base. Returns the updated repository list. (tech_lead/admin)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Work Items",
+      "description": "The unit of work (per-WorkItem DAG). Create/list/retrieve/update, plus phase trigger, human takeover, and the lifecycle rail. List responses are enriched with card fields (`artifact_count`, `owner`, `needs`). (Also `current_phase`, `run_status`; see List Work Items.)",
+      "item": [
+        {
+          "name": "List Work Items",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/work-items/?project={{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "work-items", ""],
+              "query": [
+                { "key": "project", "value": "{{projectId}}" },
+                { "key": "state", "value": "", "disabled": true },
+                { "key": "type", "value": "", "disabled": true },
+                { "key": "parent", "value": "", "disabled": true }
+              ]
+            },
+            "description": "`GET /api/work-items/` — tenant-scoped list with card fields. Optional filters (Params tab): `project`, `state`, `type` (epic/story/task/defect), `parent`. Card fields on each row: `artifact_count, owner, needs, current_phase, run_status`. `needs` is `null` or `{clarification: true, label, yours}` / `{gate: true, label, yours}` — `yours` is true only when the signed-in user may answer that question (project member) or decide that gate (same rule as the decide endpoint). `current_phase` / `run_status` come from the item's latest run (`\"\"` when nothing has run)."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Work Item",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('workItemId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"project\": \"{{projectId}}\",\n  \"title\": \"Speed up checkout page load\",\n  \"description\": \"Reduce p95 to under 200ms.\",\n  \"type\": \"story\",\n  \"feature_stream\": \"checkout\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/work-items/", "host": ["{{baseUrl}}"], "path": ["api", "work-items", ""] },
+            "description": "`POST /api/work-items/` — `project` (required, validated against the tenant), `title`, `description`, `type` (epic/story/task/defect), `feature_stream`, `repo`, `parent`, `depends_on`, `assignee`. `state`/`key`/`number`/`external_ref` are read-only. Captures `workItemId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Work Item",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/work-items/{{workItemId}}/", "host": ["{{baseUrl}}"], "path": ["api", "work-items", "{{workItemId}}", ""] },
+            "description": "`GET /api/work-items/{id}/` — a single work item enriched with `artifact_count`, `owner`, `needs`."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Work Item (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Speed up checkout (p95 < 180ms)\",\n  \"description\": \"Tighter target after profiling.\",\n  \"type\": \"story\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/work-items/{{workItemId}}/", "host": ["{{baseUrl}}"], "path": ["api", "work-items", "{{workItemId}}", ""] },
+            "description": "`PATCH /api/work-items/{id}/` — edit **`title`/`description`/`type` only**. `state`, `parent`, `takeover_flag`, and `external_ref` change via their own actions/reconciliation, not here. `PUT` is also accepted."
+          },
+          "response": []
+        },
+        {
+          "name": "Trigger Phase Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.run_id) pm.collectionVariables.set('runId', b.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"agent_key\": \"01_ideation\",\n  \"gate_type\": \"phase_gate\",\n  \"required_role\": \"product_owner\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/work-items/{{workItemId}}/trigger/", "host": ["{{baseUrl}}"], "path": ["api", "work-items", "{{workItemId}}", "trigger", ""] },
+            "description": "`POST /api/work-items/{id}/trigger/` — start a phase run (replaces the legacy slash command). Body: `agent_key` (required — from `GET /api/phases/`), `gate_type` (default `phase_gate`), `required_role` (the role that must approve the gate), `user_id` (optional; pre-auth/runner fallback — under a session the actor is the logged-in user and their companion is targeted).\n\n**202** → `{run_id, workflow_id}`. Captures `runId`. Invalid `agent_key` → **400**."
+          },
+          "response": []
+        },
+        {
+          "name": "Take Over / Release (work item)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"actor\": \"developer\",\n  \"reason\": \"Hand-finishing the worktree branch.\",\n  \"release\": false\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/work-items/{{workItemId}}/take-over/", "host": ["{{baseUrl}}"], "path": ["api", "work-items", "{{workItemId}}", "take-over", ""] },
+            "description": "`POST /api/work-items/{id}/take-over/` — human takeover: automation pauses and the developer hand-works the branch (commits reconcile via the GitHub webhook). Body: `actor` (default `developer`), `reason`. Set `\"release\": true` to hand it back to automation."
+          },
+          "response": []
+        },
+        {
+          "name": "Lifecycle Rail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/work-items/{{workItemId}}/lifecycle/", "host": ["{{baseUrl}}"], "path": ["api", "work-items", "{{workItemId}}", "lifecycle", ""] },
+            "description": "`GET /api/work-items/{id}/lifecycle/` — per-phase state derived from runs + pending gates/clarifications: `{tier, nodes, loops, children, parent}`. Each node: `{phase, label, state, run_id, triggerable}`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Runs",
+      "description": "Read-only view of phase/build runs, plus the transcript replay and an offline-takeover entry point keyed by run id.",
+      "item": [
+        {
+          "name": "List Runs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/runs/?work_item={{workItemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "runs", ""],
+              "query": [
+                { "key": "work_item", "value": "{{workItemId}}" },
+                { "key": "project", "value": "{{projectId}}", "disabled": true }
+              ]
+            },
+            "description": "`GET /api/runs/` — tenant-scoped, newest first. Optional filters: `work_item`, `project`. Each run exposes `agent_key`/`agent_phase` (human-readable) alongside the `agent_spec` UUID — **re-trigger by `agent_key`, never the UUID**."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Run",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/runs/{{runId}}/", "host": ["{{baseUrl}}"], "path": ["api", "runs", "{{runId}}", ""] },
+            "description": "`GET /api/runs/{id}/` — a single run (status, engine/model, cost, inputs/outputs, timing)."
+          },
+          "response": []
+        },
+        {
+          "name": "Run Transcript",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/runs/{{runId}}/transcript/", "host": ["{{baseUrl}}"], "path": ["api", "runs", "{{runId}}", "transcript", ""] },
+            "description": "`GET /api/runs/{id}/transcript/` — read-only replay of the agent conversation: `{run_id, phase, engine, cost, turns[]}`. Empty `turns` when nothing recorded yet."
+          },
+          "response": []
+        },
+        {
+          "name": "Take Over / Release (via run)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"actor\": \"developer\",\n  \"reason\": \"Taking this run's work item offline.\",\n  \"release\": false\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runs/{{runId}}/take-over/", "host": ["{{baseUrl}}"], "path": ["api", "runs", "{{runId}}", "take-over", ""] },
+            "description": "`POST /api/runs/{id}/take-over/` — offline takeover keyed by run id; delegates to the run's work-item takeover. Body same as the work-item variant (`actor`, `reason`, `release`)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Artifacts",
+      "description": "Read-only registry of artifacts (pointers + provenance, never bodies). Plus a read-through body preview and a gate-respecting manual publish.",
+      "item": [
+        {
+          "name": "List Artifacts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/artifacts/?project={{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "artifacts", ""],
+              "query": [
+                { "key": "project", "value": "{{projectId}}" },
+                { "key": "phase", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true }
+              ]
+            },
+            "description": "`GET /api/artifacts/` — tenant-scoped. Optional filters: `project`, `phase`, `status`. Fields are pointers/provenance only (`s3_key`, `content_hash`, `version`, `external_ref`, `sor`, ...)."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Artifact",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/artifacts/{{artifactId}}/", "host": ["{{baseUrl}}"], "path": ["api", "artifacts", "{{artifactId}}", ""] },
+            "description": "`GET /api/artifacts/{id}/` — a single artifact pointer record."
+          },
+          "response": []
+        },
+        {
+          "name": "Preview Artifact Body (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/artifacts/{{artifactId}}/preview/", "host": ["{{baseUrl}}"], "path": ["api", "artifacts", "{{artifactId}}", "preview", ""] },
+            "description": "`GET /api/artifacts/{id}/preview/` — read-through body (S3 draft/snapshot or SoR), never an editor, never copied into the registry. Authenticated member. **404** if there's truly no body."
+          },
+          "response": []
+        },
+        {
+          "name": "Publish Artifact",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"target_capability\": \"confluence\",\n  \"destination\": \"https://acme.atlassian.net/wiki\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/artifacts/{{artifactId}}/publish/", "host": ["{{baseUrl}}"], "path": ["api", "artifacts", "{{artifactId}}", "publish", ""] },
+            "description": "`POST /api/artifacts/{id}/publish/` — gate-respecting publish to a SoR. **The artifact must be gate-APPROVED first** — otherwise **400**. Body: `target_capability` (maps to a SoR value if known, else unchanged), `destination` (used to build the returned `sor_link`). Returns `{status:\"published\", sor_link}`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Trace Edges",
+      "description": "Read-only lineage edges between artifacts (requirement→PRD→epic→story chains).",
+      "item": [
+        {
+          "name": "List Trace Edges",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/trace-edges/?project={{projectId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "trace-edges", ""],
+              "query": [{ "key": "project", "value": "{{projectId}}" }]
+            },
+            "description": "`GET /api/trace-edges/` — tenant-scoped edges `{id, from_artifact, to_artifact, rel, created_at}`. Optional filter: `project`."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Trace Edge",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/trace-edges/{{traceEdgeId}}/", "host": ["{{baseUrl}}"], "path": ["api", "trace-edges", "{{traceEdgeId}}", ""] },
+            "description": "`GET /api/trace-edges/{id}/` — a single edge."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "description": "Read-only, append-only audit ledger. Each row is enriched with a UI `kind` (info/ok/warn/err) and a human `message`.",
+      "item": [
+        {
+          "name": "List Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/events/",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "events", ""],
+              "query": [
+                { "key": "actor", "value": "", "disabled": true },
+                { "key": "action", "value": "", "disabled": true },
+                { "key": "target_type", "value": "", "disabled": true },
+                { "key": "target_id", "value": "", "disabled": true }
+              ]
+            },
+            "description": "`GET /api/events/` — newest first. Optional filters: `actor`, `action`, `target_type`, `target_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Event",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/events/{{eventId}}/", "host": ["{{baseUrl}}"], "path": ["api", "events", "{{eventId}}", ""] },
+            "description": "`GET /api/events/{id}/` — a single ledger event."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Approvals (Gates)",
+      "description": "Read-only pending/decided gate approvals, plus the criteria checklist and the decide action that signals the workflow.",
+      "item": [
+        {
+          "name": "List Approvals",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/approvals/?decision=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "approvals", ""],
+              "query": [
+                { "key": "decision", "value": "pending" },
+                { "key": "run", "value": "", "disabled": true },
+                { "key": "work_item", "value": "", "disabled": true }
+              ]
+            },
+            "description": "`GET /api/approvals/` — tenant-scoped. Optional filters: `decision` (pending/approved/rejected), `run`, `work_item`."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Approval",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/approvals/{{approvalId}}/", "host": ["{{baseUrl}}"], "path": ["api", "approvals", "{{approvalId}}", ""] },
+            "description": "`GET /api/approvals/{id}/` — a single approval (`gate_type`, `required_role`, `decision`, `approver_name`, ...)."
+          },
+          "response": []
+        },
+        {
+          "name": "Gate Criteria Checklist",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/approvals/{{approvalId}}/criteria/", "host": ["{{baseUrl}}"], "path": ["api", "approvals", "{{approvalId}}", "criteria", ""] },
+            "description": "`GET /api/approvals/{id}/criteria/` — the approval's conditions as typed criteria: `{criteria[], met, total, approve_enabled}`. `approve_enabled` is false while a required criterion is unsatisfied."
+          },
+          "response": []
+        },
+        {
+          "name": "Decide Gate",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"approved\",\n  \"comment\": \"Looks good — meets the acceptance criteria.\",\n  \"conditions\": []\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/approvals/{{approvalId}}/decide/", "host": ["{{baseUrl}}"], "path": ["api", "approvals", "{{approvalId}}", "decide", ""] },
+            "description": "`POST /api/approvals/{id}/decide/` — decide a pending gate: role check → record → signal the workflow. Body: `decision` (`approved`/`rejected`, required), `comment`, `conditions` (checklist updates; a required-but-unsatisfied condition blocks an APPROVED decision), `user_id` (pre-auth/runner fallback — required only when there's no session).\n\n**403** if the actor lacks the required role · **400** on gate errors."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Clarifications",
+      "description": "Read-only list of agent-raised clarifications, plus the answer action that unblocks the waiting agent.",
+      "item": [
+        {
+          "name": "List Clarifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/clarifications/?status=pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "clarifications", ""],
+              "query": [
+                { "key": "status", "value": "pending" },
+                { "key": "run", "value": "", "disabled": true },
+                { "key": "work_item", "value": "", "disabled": true }
+              ]
+            },
+            "description": "`GET /api/clarifications/` — tenant-scoped. Optional filters: `status`, `run`, `work_item`. A pending clarification blocks the agent on its `ask_human` tool call (no engine cost while idle)."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Clarification",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/clarifications/{{clarificationId}}/", "host": ["{{baseUrl}}"], "path": ["api", "clarifications", "{{clarificationId}}", ""] },
+            "description": "`GET /api/clarifications/{id}/` — a single clarification (`questions`, `answers`, `context`, `status`, ...)."
+          },
+          "response": []
+        },
+        {
+          "name": "Answer Clarification",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"answers\": {\n    \"q1\": \"Use the existing payments provider; no migration this sprint.\"\n  }\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/clarifications/{{clarificationId}}/answer/", "host": ["{{baseUrl}}"], "path": ["api", "clarifications", "{{clarificationId}}", "answer", ""] },
+            "description": "`POST /api/clarifications/{id}/answer/` — project-membership check → required-answer check → record. `answers` maps each question id to the human's answer. `user_id` is the pre-auth/runner fallback (required only without a session). The blocked agent resumes on its next poll. **403** on role error."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Source Documents",
+      "description": "Read-only brownfield-lite uploads (global list/retrieve), plus the product-owner adopt gate. Uploads are created via `Projects → Upload Source Document`.",
+      "item": [
+        {
+          "name": "List Source Documents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/source-documents/", "host": ["{{baseUrl}}"], "path": ["api", "source-documents", ""] },
+            "description": "`GET /api/source-documents/` — tenant-scoped, newest first. Fields: `filename, mime, status, extracted_artifact_ids, provenance, ...`."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Source Document",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/source-documents/{{sourceDocumentId}}/", "host": ["{{baseUrl}}"], "path": ["api", "source-documents", "{{sourceDocumentId}}", ""] },
+            "description": "`GET /api/source-documents/{id}/` — a single source document."
+          },
+          "response": []
+        },
+        {
+          "name": "Adopt Source Document (product_owner)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"user_id\": \"{{userId}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/source-documents/{{sourceDocumentId}}/adopt/", "host": ["{{baseUrl}}"], "path": ["api", "source-documents", "{{sourceDocumentId}}", "adopt", ""] },
+            "description": "`POST /api/source-documents/{id}/adopt/` — the onboarding review gate: a **product_owner** publishes the extracted draft artifacts. `user_id` required (must hold product_owner). **403** on role error · **400** on onboarding error."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Invitations (admin)",
+      "description": "Tenant-admin management of invitations. Create emails an accept link; resend rotates the token; revoke disables it. The raw token is never returned. **Requires a tenant-admin session.**",
+      "item": [
+        {
+          "name": "List Invitations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/invitations/", "host": ["{{baseUrl}}"], "path": ["api", "invitations", ""] },
+            "description": "`GET /api/invitations/` — newest first. Fields: `email, name, status, grants, expires_at, accepted_at, created_at`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Invitation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('invitationId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"grace@example.com\",\n  \"name\": \"Grace Hopper\",\n  \"grants\": [\n    { \"project_id\": \"{{projectId}}\", \"role\": \"developer\" }\n  ]\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/invitations/", "host": ["{{baseUrl}}"], "path": ["api", "invitations", ""] },
+            "description": "`POST /api/invitations/` — invite a user and queue project-role grants. `email` required; `name` optional; `grants` is a list of `{project_id, role}`. Emails an accept link (console EmailBackend in dev). Captures `invitationId`. **400** if the email is already invited/registered."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Invitation",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/invitations/{{invitationId}}/", "host": ["{{baseUrl}}"], "path": ["api", "invitations", "{{invitationId}}", ""] },
+            "description": "`GET /api/invitations/{id}/` — a single invitation (never exposes the token)."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend Invitation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/invitations/{{invitationId}}/resend/", "host": ["{{baseUrl}}"], "path": ["api", "invitations", "{{invitationId}}", "resend", ""] },
+            "description": "`POST /api/invitations/{id}/resend/` — rotate the token and re-email the link. **400** if the invitation can't be resent (already accepted/revoked)."
+          },
+          "response": []
+        },
+        {
+          "name": "Revoke Invitation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/invitations/{{invitationId}}/revoke/", "host": ["{{baseUrl}}"], "path": ["api", "invitations", "{{invitationId}}", "revoke", ""] },
+            "description": "`POST /api/invitations/{id}/revoke/` — disable the invitation's token. **400** if it can't be revoked."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users (admin)",
+      "description": "Tenant-admin surface for the tenant's users and the tenant-admin toggle. Project roles are managed under `Projects → Memberships`. **Requires a tenant-admin session.**",
+      "item": [
+        {
+          "name": "List Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/users/", "host": ["{{baseUrl}}"], "path": ["api", "users", ""] },
+            "description": "`GET /api/users/` — the tenant's users with their roles/admin flag."
+          },
+          "response": []
+        },
+        {
+          "name": "Set Tenant Admin (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"is_tenant_admin\": true\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/users/{{userId}}/", "host": ["{{baseUrl}}"], "path": ["api", "users", "{{userId}}", ""] },
+            "description": "`PATCH /api/users/{id}/` — promote/demote a user's tenant-admin flag. **409** if it would remove the tenant's last admin. Returns `{id, name, email, is_tenant_admin}`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Integrations (admin)",
+      "description": "Tenant-admin CRUD over per-capability connections. One connection per (tenant, capability). Secrets are **write-only** — accepted on create/update, never serialized back (responses expose `configured` only). **Requires a tenant-admin session.** Credential-free built-ins (`a11yai`, and `codeintel` since 2026-09-11) are provisioned automatically for every workspace and have no card on the Integrations screen.",
+      "item": [
+        {
+          "name": "List Integrations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/integrations/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", ""] },
+            "description": "`GET /api/integrations/` — connections ordered by capability. Fields: `capability, connector, vendor, status (connected/not_connected/failed), configured, binding, created_at`."
+          },
+          "response": []
+        },
+        {
+          "name": "Integration Catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/integrations/catalog/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", "catalog", ""] },
+            "description": "`GET /api/integrations/catalog/` — the per-capability vendor + field catalog that drives the connect form. Static wiring metadata (no tenant data)."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Integration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('integrationId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"capability\": \"docstore\",\n  \"vendor\": \"confluence\",\n  \"binding\": { \"space_key\": \"ENG\" },\n  \"secrets\": { \"api_token\": \"REDACTED\" }\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/integrations/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", ""] },
+            "description": "`POST /api/integrations/` — create a connection. `capability` + `vendor` required; `binding` is non-secret config; `secrets` is write-only (never echoed back). Captures `integrationId`. Domain errors return the service's status."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Integration",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/integrations/{{integrationId}}/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", "{{integrationId}}", ""] },
+            "description": "`GET /api/integrations/{id}/` — a single connection (secret never exposed)."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Integration (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"binding\": { \"space_key\": \"PLATFORM\" }\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/integrations/{{integrationId}}/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", "{{integrationId}}", ""] },
+            "description": "`PATCH /api/integrations/{id}/` — partial update. Only supplied keys change; **omitting `secrets` leaves the stored credential untouched**. Fields: `vendor`, `binding`, `secrets`."
+          },
+          "response": []
+        },
+        {
+          "name": "Test Connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/integrations/{{integrationId}}/test-connection/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", "{{integrationId}}", "test-connection", ""] },
+            "description": "`POST /api/integrations/{id}/test-connection/` — validate the vendor is wired + configured (no live network call yet). Returns the check result."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Integration",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/integrations/{{integrationId}}/", "host": ["{{baseUrl}}"], "path": ["api", "integrations", "{{integrationId}}", ""] },
+            "description": "`DELETE /api/integrations/{id}/` — remove the connection. **204**."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Drift",
+      "description": "Read-only drift records (the Approval-analog for run-less changes) plus the decide action. Role check (architect for contract, tech_lead for pointer/hash) lives in the service.",
+      "item": [
+        {
+          "name": "List Drift Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/drift/", "host": ["{{baseUrl}}"], "path": ["api", "drift", ""] },
+            "description": "`GET /api/drift/` — tenant-scoped, newest first. Fields: `project, artifact, kind, required_role, status, detail, impacted, decided_by, decided_at, comment, created_at`."
+          },
+          "response": []
+        },
+        {
+          "name": "Retrieve Drift Record",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/drift/{{driftId}}/", "host": ["{{baseUrl}}"], "path": ["api", "drift", "{{driftId}}", ""] },
+            "description": "`GET /api/drift/{id}/` — a single drift record."
+          },
+          "response": []
+        },
+        {
+          "name": "Decide Drift",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"decision\": \"accept\",\n  \"comment\": \"Reconcile — the contract change is intended.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/drift/{{driftId}}/decide/", "host": ["{{baseUrl}}"], "path": ["api", "drift", "{{driftId}}", "decide", ""] },
+            "description": "`POST /api/drift/{id}/decide/` — role check → record → reconcile-or-flag. Body: `decision` (`accept`/`reject`, required), `comment`, `user_id` (pre-auth/runner fallback — required without a session). **403** on role error · **400** on drift error."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Runner — Enrollment",
+      "description": "Local-companion enrollment (tenant-scoped like every other resource). Enrolling returns a **one-time token** shown once — store it as `runnerToken` for the `Runner — Companion` folder. GET requires an authenticated member session.",
+      "item": [
+        {
+          "name": "List My Enrollments (member)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/runners/", "host": ["{{baseUrl}}"], "path": ["api", "runners", ""] },
+            "description": "`GET /api/runners/` — the calling user's companion enrollments for this tenant. Authenticated member."
+          },
+          "response": []
+        },
+        {
+          "name": "Enroll Runner",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('runnerId', b.id);",
+                  "  if (b.token) pm.collectionVariables.set('runnerToken', b.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"project_id\": \"{{projectId}}\",\n  \"label\": \"ada-laptop\",\n  \"repos\": [\"checkout-service\"]\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runners/", "host": ["{{baseUrl}}"], "path": ["api", "runners", ""] },
+            "description": "`POST /api/runners/` — enroll a local companion for this tenant. `project_id` required (validated in-tenant → **404** if unknown). `label`, `repos` optional. The session user owns the enrollment (`developer_id` body param is a pre-auth fallback).\n\n**201** returns the enrollment **plus a one-time `token`** (only its hash is stored). Captures `runnerId` **and** `runnerToken`."
+          },
+          "response": []
+        },
+        {
+          "name": "Revoke Runner",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runners/{{runnerId}}/revoke/", "host": ["{{baseUrl}}"], "path": ["api", "runners", "{{runnerId}}", "revoke", ""] },
+            "description": "`POST /api/runners/{id}/revoke/` — stop the companion's token from authenticating. **404** if unknown. Returns `{id, status:\"revoked\"}`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Runner — Companion (token auth)",
+      "description": "The companion daemon on the dev machine calls these with `Authorization: Runner {{runnerToken}}` (+ `X-Tenant-ID` for the state endpoint). **No session/CSRF.** The tenant is bound from the enrollment server-side, never the body. These requests set their own Authorization header explicitly (not the collection cookie/CSRF flow).",
+      "item": [
+        {
+          "name": "Claim Next Work",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.run_id) pm.collectionVariables.set('runId', b.run_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Runner {{runnerToken}}" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}" }
+            ],
+            "url": { "raw": "{{baseUrl}}/api/runner/work/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "work", ""] },
+            "description": "`GET /api/runner/work/` — atomically claim the next dispatched phase/build task for this enrollment (skip-locked). **200** → `{kind, run_id, payload}` (captures `runId`); **204** when idle; **401** on a bad Runner token."
+          },
+          "response": []
+        },
+        {
+          "name": "Platform-State Tool Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Runner {{runnerToken}}" },
+              { "key": "X-Tenant-ID", "value": "{{tenantId}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"work_item_id\": \"{{workItemId}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runner/state/{{runnerTool}}/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "state", "{{runnerTool}}", ""] },
+            "description": "`POST /api/runner/state/{tool}/` — invoke a build-phase platform-state tool over HTTP (no DB on the dev machine). Set `runnerTool` to one of the allowlisted tools: `get_context`, `get_artifact`, `list_artifacts`, `register_artifact`, `update_artifact`, `add_trace_edge`, `log_event`, `list_work_items`, `create_work_item`, `transition_work_item`.\n\nThe JSON body is passed as kwargs to the tool (tenant is bound server-side). Returns `{result}`. **401** bad token · **403** tool not in the allowlist · **400** bad arguments."
+          },
+          "response": []
+        },
+        {
+          "name": "Fetch Build Task",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Runner {{runnerToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/runner/builds/{{runId}}/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "builds", "{{runId}}", ""] },
+            "description": "`GET /api/runner/builds/{run_id}/` — fetch the dispatched BuildTask (manifest + agent body). **401** bad token · **404** run not found · **409** no build task dispatched."
+          },
+          "response": []
+        },
+        {
+          "name": "Report Build Result",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Runner {{runnerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ok\",\n  \"summary\": \"Build complete; tests green.\",\n  \"artifacts\": []\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runner/builds/{{runId}}/report/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "builds", "{{runId}}", "report", ""] },
+            "description": "`POST /api/runner/builds/{run_id}/report/` — report the build result; resumes the BuildWorkflow via the build_reported signal. **401** · **404** run not found · **400** on report error."
+          },
+          "response": []
+        },
+        {
+          "name": "Fetch Phase Task",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Runner {{runnerToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/runner/phases/{{runId}}/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "phases", "{{runId}}", ""] },
+            "description": "`GET /api/runner/phases/{run_id}/` — fetch the dispatched phase task (manifest + agent body). **401** · **404** run not found · **409** no phase task dispatched."
+          },
+          "response": []
+        },
+        {
+          "name": "Report Phase Result",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Runner {{runnerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ok\",\n  \"summary\": \"Phase complete.\",\n  \"artifacts\": []\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runner/phases/{{runId}}/report/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "phases", "{{runId}}", "report", ""] },
+            "description": "`POST /api/runner/phases/{run_id}/report/` — report the phase result; resumes the AgentRunWorkflow via the phase_reported signal. **401** · **404** run not found · **400** on report error."
+          },
+          "response": []
+        },
+        {
+          "name": "Report Review Verdict",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Runner {{runnerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ok\",\n  \"body\": \"No blocking findings.\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runner/reviews/{{runId}}/report/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "reviews", "{{runId}}", "report", ""] },
+            "description": "`POST /api/runner/reviews/{run_id}/report/` — post the phase-08 review verdict; the server-side CompanionReviewProvider's poll parses the findings. Body: `body`, `status`. **401** · **404** run not found."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Clarification (agent ask_human)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const b = pm.response.json();",
+                  "  if (b.id) pm.collectionVariables.set('clarificationId', b.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Runner {{runnerToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"run_id\": \"{{runId}}\",\n  \"questions\": [\n    { \"id\": \"q1\", \"text\": \"Which payments provider should the new flow target?\" }\n  ],\n  \"context\": \"Deciding integration path for checkout.\",\n  \"phase\": \"05_build\",\n  \"signature\": \"payments-provider\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/runner/clarifications/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "clarifications", ""] },
+            "description": "`POST /api/runner/clarifications/` — an agent opens a clarification for its run (via `ask_human`). `run_id` required. Idempotent by `signature` (a re-ask reuses the same clarification). **201** → captures `clarificationId`. **400** missing run_id · **404** run not found."
+          },
+          "response": []
+        },
+        {
+          "name": "Poll Clarification",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Runner {{runnerToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/runner/clarifications/{{clarificationId}}/", "host": ["{{baseUrl}}"], "path": ["api", "runner", "clarifications", "{{clarificationId}}", ""] },
+            "description": "`GET /api/runner/clarifications/{id}/` — the companion polls its clarification until the human answers it in the web app. **401** · **404** not found."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "description": "Signed inbound webhooks. No DRF auth — the HMAC signature is the authentication.",
+      "item": [
+        {
+          "name": "GitHub Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-GitHub-Event", "value": "push" },
+              { "key": "X-GitHub-Delivery", "value": "00000000-0000-0000-0000-000000000000" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=REPLACE_WITH_HMAC_OF_RAW_BODY" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"ref\": \"refs/heads/main\",\n  \"repository\": { \"full_name\": \"acme/checkout-service\" },\n  \"commits\": []\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/api/webhooks/github/{{webhookTenantId}}/", "host": ["{{baseUrl}}"], "path": ["api", "webhooks", "github", "{{webhookTenantId}}", ""] },
+            "description": "`POST /api/webhooks/github/{tenant_id}/` — tenant is in the path; the **raw body** is HMAC-verified against the platform's `GITHUB_WEBHOOK_SECRET` before anything is trusted.\n\nHeaders: `X-Hub-Signature-256` = `sha256=<HMAC-SHA256(secret, raw body)>` (required), `X-GitHub-Event`, `X-GitHub-Delivery`. **401** invalid signature · **400** malformed payload. Set `webhookTenantId` (usually equals `tenantId`).\n\n*Note:* the signature must match the exact bytes Postman sends, so compute it against the final rendered body. Normally GitHub sends this — this request is for manual testing only."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

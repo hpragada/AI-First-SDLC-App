@@ -1,0 +1,37 @@
+{
+  "dataset_version": "0.2.0",
+  "app_version": "1.4.0",
+  "generated_on": "2026-08-28",
+  "counts": {
+    "1.1.1": 32,
+    "1.3.1": 37,
+    "4.1.2": 27,
+    "1.4.1": 35,
+    "2.5.3": 42
+  },
+  "expected_candidates": {
+    "/catalogue/browse-all": 12,
+    "/staff/bulk-actions": 20,
+    "/account/full-profile": 15,
+    "/branches": 8,
+    "/about/terms": 0,
+    "/about/reading-rooms": 5,
+    "/about/our-buildings": 5,
+    "/account/charges": 6,
+    "/account/statement-of-fees": 6,
+    "/account/membership-tools": 11,
+    "/help/membership-actions": 11,
+    "/catalogue/saved-searches": 3,
+    "/catalogue/my-searches": 3,
+    "/reports/stock-levels": 3,
+    "/reports/holdings-by-branch": 3,
+    "/reports/issue-figures": 3,
+    "/reports/loan-figures": 3,
+    "/staff/rota": 3,
+    "/staff/staffing-plan": 3,
+    "/events/workshops": 3,
+    "/events/classes": 3
+  },
+  "relabel_agreement": null,
+  "notes": "INTERNAL — Edvensoft accessibility evaluation data. Not a tenant feature. Must never be read by tenant-facing code or written to tenant tables. v0.2 is still for proving the harness — DO NOT PUBLISH THESE NUMBERS and do not gate on them (GOLDEN_DATASET_SPEC §5). Every verdict is an unadjudicated draft awaiting expert review; `labelled_by` says so on every record. No blind re-label round has been run, so `relabel_agreement` is null. Single-labeller dataset — see GOLDEN_DATASET_SPEC §6 for the limitation that inherits. Five of the platform's six AI checkers are covered; `graphics` (1.4.11 Non-text Contrast) has no records, deliberately and not by oversight — see 'Not covered, and how to add it' in README.md, which names what a future author needs and the one constraint on who may write them."
+}

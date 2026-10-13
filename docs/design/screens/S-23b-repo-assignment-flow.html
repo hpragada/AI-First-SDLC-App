@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Option C (Hybrid) repo-assignment flow preview. Self-contained (own tokens from design-system.css);
+     source for the S-13 / S-23 / S-16 build once the team approves. Not shell-mounted (multi-screen flow preview). -->
+<title>Repo Assignment — Hybrid (Option C) Flow</title>
+<style>
+:root{
+  --brand-navy:#1E2A5A; --brand-navy-500:#33417A; --brand-navy-100:#E5E9F4;
+  --brand-orange:#F26F21; --brand-orange-600:#D95E15; --brand-orange-50:#FDF0E7;
+  --bg-app:#F4F6F9; --bg-surface:#FFFFFF; --bg-subtle:#EEF1F6;
+  --border:#E2E7EF; --border-strong:#CBD3E0;
+  --text-strong:#1B2440; --text-body:#3A4256; --text-muted:#6B7385; --text-faint:#9AA1B1;
+  --success:#1FA971; --success-bg:#E5F5EE;
+  --warning:#E0961B; --warning-bg:#FBF1DE;
+  --danger:#DC2626; --danger-bg:#FCEAEA;
+  --info:#2563EB; --info-bg:#E7EEFD;
+  --purple:#7C5CD6; --purple-bg:#EFEAFB;
+  --radius-sm:6px; --radius-md:10px; --radius-lg:14px; --pill:999px;
+  --shadow-sm:0 1px 2px rgba(20,30,60,.06);
+  --shadow-md:0 4px 12px rgba(20,30,60,.08);
+  --shadow-lg:0 12px 32px rgba(20,30,60,.14);
+  --font-sans:Inter,"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:"JetBrains Mono","SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sp1:4px;--sp2:8px;--sp3:12px;--sp4:16px;--sp5:20px;--sp6:24px;--sp7:32px;--sp8:40px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg-app:#0E1526; --bg-surface:#151E33; --bg-subtle:#1B2540;
+    --border:#28324F; --border-strong:#3A4770;
+    --text-strong:#EAEEF9; --text-body:#C2CADF; --text-muted:#8B95AF; --text-faint:#6B7592;
+    --brand-navy-100:#22305C;
+    --success-bg:#122C22; --warning-bg:#2E2612; --danger-bg:#2E1616; --info-bg:#15213E; --purple-bg:#221C3A;
+    --brand-orange-50:#2A1B10;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 14px 36px rgba(0,0,0,.55);
+  }
+}
+:root[data-theme="dark"]{
+  --bg-app:#0E1526; --bg-surface:#151E33; --bg-subtle:#1B2540;
+  --border:#28324F; --border-strong:#3A4770;
+  --text-strong:#EAEEF9; --text-body:#C2CADF; --text-muted:#8B95AF; --text-faint:#6B7592;
+  --brand-navy-100:#22305C;
+  --success-bg:#122C22; --warning-bg:#2E2612; --danger-bg:#2E1616; --info-bg:#15213E; --purple-bg:#221C3A;
+  --brand-orange-50:#2A1B10;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 4px 14px rgba(0,0,0,.45); --shadow-lg:0 14px 36px rgba(0,0,0,.55);
+}
+:root[data-theme="light"]{
+  --bg-app:#F4F6F9; --bg-surface:#FFFFFF; --bg-subtle:#EEF1F6;
+  --border:#E2E7EF; --border-strong:#CBD3E0;
+  --text-strong:#1B2440; --text-body:#3A4256; --text-muted:#6B7385; --text-faint:#9AA1B1;
+  --brand-navy-100:#E5E9F4;
+  --success-bg:#E5F5EE; --warning-bg:#FBF1DE; --danger-bg:#FCEAEA; --info-bg:#E7EEFD; --purple-bg:#EFEAFB;
+  --brand-orange-50:#FDF0E7;
+}
+*,*::before,*::after{box-sizing:border-box;}
+body{margin:0;font-family:var(--font-sans);font-size:14px;line-height:1.5;color:var(--text-body);background:var(--bg-app);-webkit-font-smoothing:antialiased;}
+h1,h2,h3,h4,p{margin:0;}
+.wrap{max-width:960px;margin:0 auto;padding:var(--sp7) var(--sp5) var(--sp8);}
+
+/* page intro */
+.masthead{border:1px solid var(--border);background:linear-gradient(180deg,var(--brand-navy) 0%,var(--brand-navy-500) 100%);color:#EAEEF9;border-radius:var(--radius-lg);padding:var(--sp7);box-shadow:var(--shadow-md);}
+.masthead .eyebrow{font-size:12px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#B9C2E4;}
+.masthead h1{font-size:26px;line-height:1.2;font-weight:700;color:#fff;margin-top:var(--sp2);text-wrap:balance;}
+.masthead p{color:#C7CFEA;margin-top:var(--sp3);max-width:64ch;}
+.legend{display:flex;flex-wrap:wrap;gap:var(--sp2);margin-top:var(--sp5);}
+.legend .chip{background:rgba(255,255,255,.12);color:#E7ECFA;border-color:transparent;}
+
+/* section scaffolding */
+.step{margin-top:var(--sp8);}
+.step__eyebrow{display:flex;align-items:center;gap:var(--sp3);margin-bottom:var(--sp3);}
+.step__num{width:26px;height:26px;flex:0 0 26px;border-radius:var(--pill);background:var(--brand-orange);color:#fff;font-size:13px;font-weight:700;display:grid;place-items:center;box-shadow:var(--shadow-sm);}
+.step__label{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--text-muted);}
+.step__title{font-size:19px;font-weight:700;color:var(--text-strong);margin-bottom:var(--sp1);text-wrap:balance;}
+.step__sub{color:var(--text-muted);margin-bottom:var(--sp4);max-width:70ch;}
+
+/* card / panel */
+.card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);overflow:hidden;}
+.card__head{padding:var(--sp4) var(--sp5);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:var(--sp3);background:var(--bg-subtle);}
+.card__head h3{font-size:15px;font-weight:600;color:var(--text-strong);}
+.card__body{padding:var(--sp5);}
+.card__foot{padding:var(--sp4) var(--sp5);border-top:1px solid var(--border);display:flex;align-items:center;gap:var(--sp3);flex-wrap:wrap;background:var(--bg-subtle);}
+.spacer{flex:1 1 auto;}
+
+/* summary strip */
+.summary{display:flex;flex-wrap:wrap;gap:var(--sp3);}
+.stat{flex:1 1 130px;border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--sp4);background:var(--bg-surface);}
+.stat__num{font-size:24px;font-weight:700;color:var(--text-strong);font-variant-numeric:tabular-nums;}
+.stat__lbl{font-size:12px;color:var(--text-muted);margin-top:2px;}
+.stat--warn{background:var(--warning-bg);border-color:transparent;}
+.stat--warn .stat__num{color:var(--warning);}
+
+/* repo group */
+.repogroup + .repogroup{border-top:1px solid var(--border);}
+.repogroup__head{display:flex;align-items:center;gap:var(--sp3);padding:var(--sp3) var(--sp5);background:var(--bg-subtle);}
+.repogroup__name{font-family:var(--font-mono);font-size:13px;color:var(--text-strong);font-weight:600;}
+.repogroup__count{font-size:12px;color:var(--text-muted);}
+
+/* task row */
+.trow{display:flex;align-items:center;gap:var(--sp4);padding:var(--sp4) var(--sp5);border-top:1px solid var(--border);}
+.trow:first-child{border-top:none;}
+.trow__main{min-width:0;flex:1 1 auto;}
+.trow__title{color:var(--text-strong);font-weight:600;}
+.trow__meta{font-size:12px;color:var(--text-muted);margin-top:2px;display:flex;gap:var(--sp2);align-items:center;flex-wrap:wrap;}
+.trow__reason{font-size:12.5px;color:var(--text-muted);margin-top:var(--sp2);}
+.trow__reason b{color:var(--text-body);font-weight:600;}
+.trow__assign{flex:0 0 auto;display:flex;align-items:center;gap:var(--sp2);}
+.trow--flag{background:var(--warning-bg);}
+.trow--over{background:var(--brand-orange-50);}
+
+/* chips + badges */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 10px;border-radius:var(--pill);border:1px solid var(--border-strong);color:var(--text-body);background:var(--bg-surface);white-space:nowrap;}
+.chip .dot{width:7px;height:7px;border-radius:var(--pill);background:currentColor;}
+.chip--backend{color:var(--info);background:var(--info-bg);border-color:transparent;}
+.chip--frontend{color:var(--purple);background:var(--purple-bg);border-color:transparent;}
+.chip--infra{color:var(--warning);background:var(--warning-bg);border-color:transparent;}
+.chip--high{color:var(--success);background:var(--success-bg);border-color:transparent;}
+.chip--low{color:var(--warning);background:var(--warning-bg);border-color:transparent;}
+.chip--over{color:var(--brand-orange-600);background:var(--brand-orange-50);border-color:transparent;}
+.chip--navy{color:#fff;background:var(--brand-navy);border-color:transparent;}
+
+/* select (override) */
+.sel{appearance:none;font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong);background:var(--bg-surface);border:1px solid var(--border-strong);border-radius:var(--radius-sm);padding:6px 28px 6px 10px;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--text-muted) 50%),linear-gradient(135deg,var(--text-muted) 50%,transparent 50%);
+  background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;}
+.sel:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-orange);}
+.field__lbl{font-size:12px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:6px;}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;padding:9px 16px;border-radius:var(--radius-sm);border:1px solid transparent;cursor:pointer;transition:120ms ease;}
+.btn--primary{background:var(--brand-orange);color:#fff;}
+.btn--primary:hover{background:var(--brand-orange-600);}
+.btn--secondary{background:var(--bg-surface);color:var(--text-strong);border-color:var(--border-strong);}
+.btn--ghost{background:transparent;color:var(--info);padding:6px 10px;}
+.btn--sm{font-size:12.5px;padding:6px 12px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn:focus-visible{outline:none;box-shadow:0 0 0 3px var(--brand-orange);}
+
+/* banner */
+.banner{display:flex;gap:var(--sp3);padding:var(--sp4);border-radius:var(--radius-md);}
+.banner--info{background:var(--info-bg);}
+.banner--success{background:var(--success-bg);}
+.banner__i{font-weight:700;}
+.banner--info .banner__i{color:var(--info);}
+.banner--success .banner__i{color:var(--success);}
+.banner__t{font-weight:700;color:var(--text-strong);margin-bottom:2px;}
+.banner__b{font-size:13px;color:var(--text-body);}
+
+/* progress */
+.prog{display:flex;align-items:center;gap:var(--sp3);}
+.prog__bar{flex:1 1 auto;height:8px;border-radius:var(--pill);background:var(--bg-subtle);overflow:hidden;min-width:120px;}
+.prog__fill{height:100%;background:var(--success);border-radius:var(--pill);}
+.prog__txt{font-size:12.5px;color:var(--text-muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
+
+/* mini table */
+.mtable{width:100%;border-collapse:collapse;}
+.mtable th{text-align:left;font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--text-muted);padding:var(--sp2) var(--sp3);border-bottom:1px solid var(--border);font-weight:600;}
+.mtable td{padding:var(--sp3);border-bottom:1px solid var(--border);color:var(--text-body);}
+.mtable td.mono,.mtable th.mono{font-family:var(--font-mono);font-size:12.5px;}
+.mtable tr:last-child td{border-bottom:none;}
+
+/* note callout */
+.note{margin-top:var(--sp4);border-left:3px solid var(--brand-orange);background:var(--brand-orange-50);border-radius:0 var(--radius-md) var(--radius-md) 0;padding:var(--sp3) var(--sp4);font-size:13px;color:var(--text-body);}
+.note b{color:var(--text-strong);}
+
+/* two-col */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp4);}
+@media(max-width:680px){.cols{grid-template-columns:1fr;}.trow{flex-wrap:wrap;}.trow__assign{width:100%;}}
+
+.footluft{margin-top:var(--sp8);padding-top:var(--sp5);border-top:1px solid var(--border);color:var(--text-faint);font-size:12.5px;text-align:center;}
+.kbd{font-family:var(--font-mono);font-size:12px;background:var(--bg-subtle);border:1px solid var(--border);border-radius:4px;padding:1px 6px;color:var(--text-body);}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">AI-First SDLC · Design preview · for team approval</div>
+    <h1>Repository assignment — the Hybrid (Option C) flow</h1>
+    <p>The Task Breakdown agent <b>proposes</b> a repository for every work item; the reviewer <b>confirms or overrides</b> at the gate before anything is locked for implementation. Draft → reviewed → gated → published — the platform's own rule, applied to <i>where code lands</i>.</p>
+    <div class="legend">
+      <span class="chip"><span class="dot" style="color:var(--info)"></span>backend</span>
+      <span class="chip"><span class="dot" style="color:var(--purple)"></span>frontend</span>
+      <span class="chip"><span class="dot" style="color:var(--warning)"></span>infra</span>
+      <span class="chip">high confidence</span>
+      <span class="chip">needs review</span>
+      <span class="chip">overridden by you</span>
+    </div>
+  </header>
+
+  <!-- STEP 1 -->
+  <section class="step">
+    <div class="step__eyebrow"><span class="step__num">1</span><span class="step__label">Setup · already exists (S-13)</span></div>
+    <h2 class="step__title">The user registers repositories &amp; roles</h2>
+    <p class="step__sub">Right after the project profile, the user adds each repo and tags its role. These roles are what the agent classifies against. (This screen already ships — shown for context.)</p>
+    <div class="card">
+      <div class="card__head"><h3>Repositories</h3><span class="chip chip--navy">Topology: multi</span></div>
+      <div class="card__body" style="padding:0">
+        <table class="mtable">
+          <thead><tr><th class="mono">Repository</th><th>Role</th><th class="mono">Base</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">acme/payments-api</td><td><span class="chip chip--backend"><span class="dot"></span>backend</span></td><td class="mono">main · default</td><td><span class="chip chip--high">Connected</span></td></tr>
+            <tr><td class="mono">acme/payments-web</td><td><span class="chip chip--frontend"><span class="dot"></span>frontend</span></td><td class="mono">main</td><td><span class="chip chip--high">Connected</span></td></tr>
+            <tr><td class="mono">acme/payments-infra</td><td><span class="chip chip--infra"><span class="dot"></span>infra</span></td><td class="mono">main</td><td><span class="chip chip--high">Connected</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 2 — THE STAR -->
+  <section class="step">
+    <div class="step__eyebrow"><span class="step__num">2</span><span class="step__label">Task Breakdown · new review surface ★</span></div>
+    <h2 class="step__title">Review the agent's repo suggestions, then approve</h2>
+    <p class="step__sub">The agent grouped all 18 tasks by the repo it thinks each belongs to, with a one-line reason and a confidence flag. Skim the confident ones; the <b>3 flagged “needs review”</b> are surfaced first. Change any with the dropdown — nothing is committed until you approve.</p>
+
+    <div class="card">
+      <div class="card__head"><h3>Repo assignment · WI-492 Stripe Webhook Integration</h3><span class="spacer"></span><span class="chip chip--low"><span class="dot"></span>3 need review</span></div>
+
+      <div class="card__body">
+        <div class="summary">
+          <div class="stat"><div class="stat__num">18</div><div class="stat__lbl">Tasks in this backlog</div></div>
+          <div class="stat"><div class="stat__num">12</div><div class="stat__lbl">→ backend</div></div>
+          <div class="stat"><div class="stat__num">5</div><div class="stat__lbl">→ frontend</div></div>
+          <div class="stat"><div class="stat__num">1</div><div class="stat__lbl">→ infra</div></div>
+          <div class="stat stat--warn"><div class="stat__num">3</div><div class="stat__lbl">Low confidence</div></div>
+        </div>
+      </div>
+
+      <!-- flagged group first -->
+      <div class="repogroup">
+        <div class="repogroup__head"><span class="chip chip--low"><span class="dot"></span>Needs your review</span><span class="repogroup__count">3 tasks the agent wasn't sure about</span></div>
+
+        <div class="trow trow--flag">
+          <div class="trow__main">
+            <div class="trow__title">Add idempotency key handling</div>
+            <div class="trow__meta"><span class="mono" style="font-family:var(--font-mono)">WI-542</span> · Task</div>
+            <div class="trow__reason"><b>Why backend:</b> touches the webhook handler, but the title also hints at a shared client util — low confidence.</div>
+          </div>
+          <div class="trow__assign">
+            <div>
+              <span class="field__lbl">Repository</span>
+              <select class="sel" aria-label="Repository for WI-542">
+                <option>acme/payments-api · backend</option>
+                <option>acme/payments-web · frontend</option>
+                <option>acme/payments-infra · infra</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="trow trow--over">
+          <div class="trow__main">
+            <div class="trow__title">Wire webhook metrics &amp; alerts</div>
+            <div class="trow__meta"><span class="mono" style="font-family:var(--font-mono)">WI-545</span> · Task <span class="chip chip--over"><span class="dot"></span>overridden</span></div>
+            <div class="trow__reason"><b>Agent said backend</b> — you moved it to <b>infra</b> (dashboards + alerting live in the infra repo).</div>
+          </div>
+          <div class="trow__assign">
+            <div>
+              <span class="field__lbl">Repository</span>
+              <select class="sel" aria-label="Repository for WI-545">
+                <option>acme/payments-infra · infra</option>
+                <option>acme/payments-api · backend</option>
+                <option>acme/payments-web · frontend</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="trow trow--flag">
+          <div class="trow__main">
+            <div class="trow__title">Surface dispute status to support UI</div>
+            <div class="trow__meta"><span class="mono" style="font-family:var(--font-mono)">WI-548</span> · Task</div>
+            <div class="trow__reason"><b>Why frontend:</b> "support UI" reads frontend, but it may be an API field first — please confirm.</div>
+          </div>
+          <div class="trow__assign">
+            <div>
+              <span class="field__lbl">Repository</span>
+              <select class="sel" aria-label="Repository for WI-548">
+                <option>acme/payments-web · frontend</option>
+                <option>acme/payments-api · backend</option>
+                <option>acme/payments-infra · infra</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- confident backend group -->
+      <div class="repogroup">
+        <div class="repogroup__head"><span class="chip chip--backend"><span class="dot"></span>backend</span><span class="repogroup__name">acme/payments-api</span><span class="repogroup__count">· 12 tasks · high confidence</span></div>
+
+        <div class="trow">
+          <div class="trow__main">
+            <div class="trow__title">Verify Stripe signing secret</div>
+            <div class="trow__meta"><span class="mono" style="font-family:var(--font-mono)">WI-540</span> · Task <span class="chip chip--high"><span class="dot"></span>high</span></div>
+            <div class="trow__reason"><b>Why:</b> server-side secret validation in the webhook endpoint.</div>
+          </div>
+          <div class="trow__assign"><div><span class="field__lbl">Repository</span><select class="sel" aria-label="Repository for WI-540"><option>acme/payments-api · backend</option><option>acme/payments-web · frontend</option><option>acme/payments-infra · infra</option></select></div></div>
+        </div>
+        <div class="trow">
+          <div class="trow__main">
+            <div class="trow__title">Persist webhook event log</div>
+            <div class="trow__meta"><span class="mono" style="font-family:var(--font-mono)">WI-541</span> · Task <span class="chip chip--high"><span class="dot"></span>high</span></div>
+            <div class="trow__reason"><b>Why:</b> new DB table + repository layer, backend-only.</div>
+          </div>
+          <div class="trow__assign"><div><span class="field__lbl">Repository</span><select class="sel" aria-label="Repository for WI-541"><option>acme/payments-api · backend</option><option>acme/payments-web · frontend</option><option>acme/payments-infra · infra</option></select></div></div>
+        </div>
+        <div class="trow" style="justify-content:center;color:var(--text-faint);font-size:12.5px;">+ 10 more backend tasks (collapsed)</div>
+      </div>
+
+      <!-- confident frontend group -->
+      <div class="repogroup">
+        <div class="repogroup__head"><span class="chip chip--frontend"><span class="dot"></span>frontend</span><span class="repogroup__name">acme/payments-web</span><span class="repogroup__count">· 5 tasks · high confidence</span></div>
+        <div class="trow">
+          <div class="trow__main">
+            <div class="trow__title">Payment-failed retry banner</div>
+            <div class="trow__meta"><span class="mono" style="font-family:var(--font-mono)">WI-546</span> · Task <span class="chip chip--high"><span class="dot"></span>high</span></div>
+            <div class="trow__reason"><b>Why:</b> a React component + user-facing copy.</div>
+          </div>
+          <div class="trow__assign"><div><span class="field__lbl">Repository</span><select class="sel" aria-label="Repository for WI-546"><option>acme/payments-web · frontend</option><option>acme/payments-api · backend</option><option>acme/payments-infra · infra</option></select></div></div>
+        </div>
+        <div class="trow" style="justify-content:center;color:var(--text-faint);font-size:12.5px;">+ 4 more frontend tasks (collapsed)</div>
+      </div>
+
+      <div class="card__foot">
+        <div class="prog" style="flex:1 1 260px">
+          <div class="prog__bar"><div class="prog__fill" style="width:83%"></div></div>
+          <span class="prog__txt">15 of 18 confirmed · 3 to review</span>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn btn--secondary">Reset to agent suggestions</button>
+        <button class="btn btn--primary">Approve assignment &amp; continue →</button>
+      </div>
+    </div>
+
+    <div class="note"><b>Why the review lives here:</b> approving repo assignment <i>is</i> the Task Breakdown gate decision. Locking it now means every downstream build routes deterministically — no surprises at implementation.</div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="step">
+    <div class="step__eyebrow"><span class="step__num">3</span><span class="step__label">Work item · redirect anytime</span></div>
+    <h2 class="step__title">A user can move a single task to another repo</h2>
+    <p class="step__sub">Even after the gate, until a task's build starts, its repo is editable on the work item — one control, same dropdown. This is the “redirect any task” escape hatch.</p>
+    <div class="cols">
+      <div class="card">
+        <div class="card__head"><h3 class="mono" style="font-family:var(--font-mono)">WI-542 · Add idempotency key handling</h3></div>
+        <div class="card__body">
+          <span class="field__lbl">Repository</span>
+          <select class="sel" style="width:100%;font-size:13.5px;padding:10px 30px 10px 12px" aria-label="Repository for WI-542 detail">
+            <option>acme/payments-api · backend</option>
+            <option>acme/payments-web · frontend</option>
+            <option>acme/payments-infra · infra</option>
+          </select>
+          <p style="font-size:12.5px;color:var(--text-muted);margin-top:var(--sp3)">Editable until the build starts. After the PR opens, the repo is fixed for this task.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card__head"><h3>Single-repo project</h3></div>
+        <div class="card__body">
+          <div class="banner banner--info"><span class="banner__i">ℹ</span><div><div class="banner__t">Nothing to assign</div><div class="banner__b">Topology is <b>single</b> — all 18 tasks target <span class="mono" style="font-family:var(--font-mono)">acme/app</span>. The review step is skipped automatically and the agent sets every task to the one repo.</div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 4 -->
+  <section class="step">
+    <div class="step__eyebrow"><span class="step__num">4</span><span class="step__label">Implementation · deterministic routing</span></div>
+    <h2 class="step__title">Each task builds in its confirmed repo</h2>
+    <p class="step__sub">Once locked, implementation opens each PR in the mapped repo. Nothing here is guessed — it's exactly what you approved.</p>
+    <div class="card">
+      <div class="card__head"><h3>Build routing</h3><span class="spacer"></span><span class="chip chip--high"><span class="dot"></span>Assignment locked</span></div>
+      <div class="card__body" style="padding:0">
+        <table class="mtable">
+          <thead><tr><th>Task</th><th class="mono">Repository</th><th>Role</th><th class="mono">Opens PR against</th></tr></thead>
+          <tbody>
+            <tr><td>Verify Stripe signing secret <span style="color:var(--text-faint)">· WI-540</span></td><td class="mono">acme/payments-api</td><td><span class="chip chip--backend"><span class="dot"></span>backend</span></td><td class="mono">main</td></tr>
+            <tr><td>Payment-failed retry banner <span style="color:var(--text-faint)">· WI-546</span></td><td class="mono">acme/payments-web</td><td><span class="chip chip--frontend"><span class="dot"></span>frontend</span></td><td class="mono">main</td></tr>
+            <tr><td>Wire webhook metrics &amp; alerts <span style="color:var(--text-faint)">· WI-545</span></td><td class="mono">acme/payments-infra</td><td><span class="chip chip--infra"><span class="dot"></span>infra</span></td><td class="mono">main</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card__foot"><div class="banner banner--success" style="flex:1 1 auto;padding:var(--sp3) var(--sp4)"><span class="banner__i">✓</span><div><div class="banner__t">Routing confirmed by a human</div><div class="banner__b">A reviewer signed off before any code was placed. Wrong-repo risk is caught at the gate, not in production.</div></div></div></div>
+    </div>
+  </section>
+
+  <div class="footluft">
+    High-level preview for approval · built on the existing design system (navy / orange, Inter, cards &amp; chips) · light + dark aware — use your viewer's theme toggle.<br>
+    Tell the team what to change; on approval this becomes the build source for <span class="kbd">S-13</span>, <span class="kbd">S-23</span>, <span class="kbd">S-16</span>.
+  </div>
+
+</div>
+
+</body>
+</html>

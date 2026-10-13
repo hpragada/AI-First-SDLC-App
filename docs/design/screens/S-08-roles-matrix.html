@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-08 · Roles & Memberships — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Roles &amp; memberships</h1>
+        <p class="page-head__sub">Per-project role grants. Each role gates specific decisions — uncovered gate roles make their gate unactionable.</p>
+      </div>
+      <select class="select" style="max-width:220px" aria-label="Project"><option>Payment Gateway v2</option><option>Legacy Billing</option></select>
+    </div>
+
+    <!-- ============ Gap warning ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Gap warning · no reviewer</span>
+      <div class="banner banner--warning" style="margin-bottom:var(--space-4)"><span class="banner__icon">⚠</span><div class="banner__body"><div class="banner__title">No reviewer on Payment Gateway v2</div>The merge gate &amp; code-review gate will be unactionable until someone holds the <strong>Reviewer</strong> role.</div></div>
+      <div class="panel"><div class="panel__body--flush" style="overflow-x:auto">
+        <table class="table table--in-panel table--matrix">
+          <thead><tr><th>User</th><th title="product_owner">PO</th><th title="architect">Arch</th><th title="designer">Design</th><th title="tech_lead">Lead</th><th title="engineer">Eng</th><th title="reviewer">Rev</th><th title="qa_lead">QA</th><th title="security_engineer">Sec</th><th title="devops">DevOps</th><th title="admin">Admin</th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">You</td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+            <tr><td class="table__primary">Sarah Chen</td>
+              <td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+            <tr><td class="table__primary">Marcus Lee</td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox" checked><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td>
+              <td><label class="switch"><input type="checkbox"><span class="switch__track"></span><span class="switch__thumb"></span></label></td></tr>
+          </tbody>
+        </table>
+      </div></div>
+
+      <div class="panel" style="margin-top:var(--space-4)">
+        <div class="panel__header"><h2 class="panel__title">Gate-role coverage</h2></div>
+        <div class="panel__body u-stack">
+          <div class="u-row-tight"><span class="assess assess--complete">✓</span><span class="t-sm">Product Owner — Sarah Chen</span></div>
+          <div class="u-row-tight"><span class="assess assess--complete">✓</span><span class="t-sm">Architect — Marcus Lee</span></div>
+          <div class="u-row-tight"><span class="assess assess--missing">✗</span><span class="t-sm u-danger">Reviewer — <strong>nobody</strong> (merge gate unactionable)</span></div>
+          <div class="u-row-tight"><span class="assess assess--missing">✗</span><span class="t-sm u-danger">Designer — nobody (UX gate unactionable)</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Saving ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Saving</span>
+      <div class="banner banner--info"><span class="banner__icon">⟳</span><div class="banner__body">Saving role change for Tom Reyes (Reviewer @ Payment Gateway v2)…</div></div>
+    </div>
+
+    <!-- ============ Last-admin guard ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Last-admin guard</span>
+      <div class="modal-scrim">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="g-t">
+          <div class="modal__header"><h3 class="modal__title" id="g-t">Can't remove the last admin</h3></div>
+          <div class="modal__body"><div class="banner banner--danger"><span class="banner__icon">▲</span><div class="banner__body">You're the only tenant-admin. Promote another member to admin before removing your own admin role, or the workspace would be left unmanageable.</div></div></div>
+          <div class="modal__footer"><button class="btn btn--secondary">Cancel</button><button class="btn btn--primary">Promote a member</button></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("admin");</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-19 · Live Run Console — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <nav class="breadcrumb"><a href="S-18-phases-runs.html">Phases &amp; Runs</a><span class="sep">›</span><span class="here">RUN-42</span></nav>
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Run console — Architecture · WI-492</h1>
+        <div class="meta-row" style="margin-top:var(--space-2)">
+          <span class="meta-item">Engine <strong>Claude · local companion</strong></span>
+          <span class="meta-item">Workflow <strong>wf-7c3a</strong></span>
+          <span class="meta-item">Triggered by <strong>You</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Dispatched · waiting ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Dispatched · waiting for your companion</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="badge badge--waiting"><span class="status-dot"></span>Dispatched · waiting</span></div>
+        <div class="panel__body">
+          <div class="banner banner--info" style="margin-bottom:var(--space-3)"><span class="banner__icon">⛶</span><div class="banner__body">Queued for <strong>Sarah's MacBook</strong>. It will start as soon as your companion claims it.</div></div>
+          <div class="console" role="log"><div class="console__line"><span class="console__ts">10:41:55</span><span class="info">Dispatched. Waiting for companion to claim…</span> <span class="console__cursor"></span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Running ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Running · streaming</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="badge badge--running"><span class="status-dot"></span>Running</span></div>
+        <div class="panel__body">
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">10:42:01</span>Compiling requirements… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">10:42:14</span>Generating sequence diagrams… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">10:42:30</span>Validating against security rules… <span class="console__cursor"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Needs answer ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Needs answer · paused, $0</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="badge badge--needs-answer"><span class="status-dot"></span>Needs answer</span></div>
+        <div class="panel__body">
+          <div class="banner banner--purple" style="margin-bottom:var(--space-3)"><span class="banner__icon">⏸</span><div class="banner__body"><div class="banner__title">Paused — no usage billed while waiting</div>The agent asked a question. Answer it to resume in the same session. <a href="S-20-clarifications.html">Answer now ↗</a></div></div>
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">10:42:30</span>Validating against security rules… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">10:42:44</span><span class="warn">[?] Need input: target Confluence space for the spec?</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Awaiting gate ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Awaiting gate</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="badge badge--gate"><span class="status-dot"></span>Awaiting gate</span></div>
+        <div class="panel__body">
+          <div class="banner banner--warning" style="margin-bottom:var(--space-3)"><span class="banner__icon">▲</span><div class="banner__body"><div class="banner__title">Awaiting Architecture gate</div>The artifact is a draft until the architect approves. <a href="S-21-gates.html">Open gate ↗</a></div></div>
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">10:42:30</span>Validating against security rules… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">10:42:31</span><span class="info">Run completed. Awaiting gate.</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Completed ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Completed · cost shown</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="meta-item">Cost <strong>$0.31</strong></span><span class="badge badge--done"><span class="status-dot"></span>Completed</span></div>
+        <div class="panel__body">
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">10:42:30</span>Validating against security rules… <span class="ok">[OK]</span></div>
+            <div class="console__line"><span class="console__ts">10:42:31</span><span class="ok">[OK] Artifact registered as draft (v0.9).</span></div>
+            <div class="console__line"><span class="console__ts">10:42:31</span><span class="info">Run completed in 30s · $0.31 (your subscription).</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Failed ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Failed · retry</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="badge badge--failed"><span class="status-dot"></span>Failed</span></div>
+        <div class="panel__body">
+          <div class="banner banner--danger" style="margin-bottom:var(--space-3)"><span class="banner__icon">✕</span><div class="banner__body"><div class="banner__title">Engine exited before reporting</div>The local engine crashed mid-run. No artifact was registered.</div></div>
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">10:42:14</span>Generating sequence diagrams… </div>
+            <div class="console__line"><span class="console__ts">10:42:19</span><span class="err">[ERROR] engine process exited (code 1)</span></div>
+          </div>
+          <div class="gate-panel__actions" style="margin-top:var(--space-3)"><button class="btn btn--primary">Retry run</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Parked for takeover ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Parked for takeover</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">RUN-42</h2><span class="u-spacer"></span><span class="badge badge--parked"><span class="status-dot"></span>Parked for takeover</span></div>
+        <div class="panel__body">
+          <div class="banner banner--danger" style="margin-bottom:var(--space-3)"><span class="banner__icon">⏻</span><div class="banner__body"><div class="banner__title">Your machine went offline — this run is parked</div>Rather than hang, it's parked for human takeover. Reconnect and re-run; answered clarifications are remembered. <a href="S-06-connect-machine.html">Reconnect &amp; re-run ↗</a></div></div>
+          <div class="console" role="log">
+            <div class="console__line"><span class="console__ts">10:42:14</span>Generating sequence diagrams… </div>
+            <div class="console__line"><span class="console__ts">10:47:14</span><span class="err">[TIMEOUT] companion last seen 5m ago — parked.</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("runs");</script>
+</body>
+</html>

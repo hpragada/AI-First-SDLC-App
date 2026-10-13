@@ -1,0 +1,233 @@
+{
+  "axe_version": "4.13.0",
+  "app_version": "1.4.0",
+  "tags": [
+    "wcag2a",
+    "wcag2aa",
+    "wcag21a",
+    "wcag21aa",
+    "wcag22a",
+    "wcag22aa"
+  ],
+  "report": {
+    "/": [],
+    "/about/choose-a-branch": [],
+    "/about/find-a-branch": [],
+    "/about/history": [],
+    "/about/membership": [
+      {
+        "id": "html-has-lang",
+        "impact": "serious",
+        "nodes": [
+          "html"
+        ]
+      }
+    ],
+    "/about/opening-hours": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "nodes": [
+          "#hours-note"
+        ]
+      }
+    ],
+    "/about/our-buildings": [],
+    "/about/reading-rooms": [],
+    "/about/team": [],
+    "/about/terms": [],
+    "/about/visit-us": [],
+    "/account/apply": [
+      {
+        "id": "label-content-name-mismatch",
+        "impact": "serious",
+        "nodes": [
+          "#apply-submit"
+        ]
+      }
+    ],
+    "/account/card-options": [],
+    "/account/card-services": [
+      {
+        "id": "label-content-name-mismatch",
+        "impact": "serious",
+        "nodes": [
+          "#card-renew",
+          "#card-pay",
+          "#card-report",
+          "#card-freeze",
+          "#card-replace",
+          "#card-upgrade",
+          "#card-close"
+        ]
+      }
+    ],
+    "/account/charges": [],
+    "/account/full-profile": [],
+    "/account/join": [],
+    "/account/loan-history": [],
+    "/account/membership-tools": [
+      {
+        "id": "label-content-name-mismatch",
+        "impact": "serious",
+        "nodes": [
+          "#act-pay",
+          "#act-renew",
+          "#act-collect",
+          "#act-return",
+          "#act-transfer",
+          "#act-cancel",
+          "#act-receipt",
+          "#act-update",
+          "#act-remind",
+          "#act-replace",
+          "#act-holds"
+        ]
+      }
+    ],
+    "/account/my-loans": [],
+    "/account/notifications": [],
+    "/account/preferences": [],
+    "/account/register": [],
+    "/account/security": [],
+    "/account/settings": [],
+    "/account/statement-of-fees": [],
+    "/account/statements": [],
+    "/account/update-details": [],
+    "/authors/featured": [],
+    "/authors/spotlight": [],
+    "/branches": [],
+    "/catalogue": [],
+    "/catalogue/advanced-search": [],
+    "/catalogue/all-titles": [],
+    "/catalogue/award-winners": [],
+    "/catalogue/browse-all": [],
+    "/catalogue/by-subject": [],
+    "/catalogue/filter": [],
+    "/catalogue/genres": [],
+    "/catalogue/my-searches": [],
+    "/catalogue/new-arrivals": [],
+    "/catalogue/place-hold": [],
+    "/catalogue/quick-find": [],
+    "/catalogue/recommended": [
+      {
+        "id": "image-alt",
+        "impact": "critical",
+        "nodes": [
+          "#cover-nightjar"
+        ]
+      }
+    ],
+    "/catalogue/refine": [],
+    "/catalogue/reserve": [
+      {
+        "id": "button-name",
+        "impact": "critical",
+        "nodes": [
+          "#reserve-submit"
+        ]
+      }
+    ],
+    "/catalogue/reserve-copy": [],
+    "/catalogue/results": [],
+    "/catalogue/saved-searches": [],
+    "/catalogue/search": [
+      {
+        "id": "label-content-name-mismatch",
+        "impact": "serious",
+        "nodes": [
+          "#search-submit"
+        ]
+      }
+    ],
+    "/catalogue/staff-picks": [],
+    "/catalogue/subject-index": [
+      {
+        "id": "td-has-header",
+        "impact": "critical",
+        "nodes": [
+          "#subject-table"
+        ]
+      }
+    ],
+    "/catalogue/subject-list": [],
+    "/contact": [
+      {
+        "id": "label",
+        "impact": "critical",
+        "nodes": [
+          "#contact-email"
+        ]
+      }
+    ],
+    "/events/book-a-room": [],
+    "/events/book-a-seat": [],
+    "/events/book-club": [],
+    "/events/calendar": [
+      {
+        "id": "link-name",
+        "impact": "serious",
+        "nodes": [
+          "#calendar-download"
+        ]
+      }
+    ],
+    "/events/classes": [],
+    "/events/summer-reading": [],
+    "/events/tickets": [
+      {
+        "id": "target-size",
+        "impact": "serious",
+        "nodes": [
+          "#page-1",
+          "#page-2",
+          "#page-3",
+          "#page-4"
+        ]
+      }
+    ],
+    "/events/workshops": [],
+    "/help/borrowing-guide": [],
+    "/help/contact-us": [],
+    "/help/faq": [],
+    "/help/getting-started": [],
+    "/help/membership-actions": [],
+    "/help/problem-report": [],
+    "/help/report-a-problem": [],
+    "/loans/current": [],
+    "/loans/history": [],
+    "/loans/renewals": [],
+    "/newsletter": [],
+    "/reports/annual-review": [],
+    "/reports/borrowing-trends": [],
+    "/reports/branch-comparison": [],
+    "/reports/holdings-by-branch": [],
+    "/reports/issue-figures": [
+      {
+        "id": "td-has-header",
+        "impact": "critical",
+        "nodes": [
+          "#issues-q1",
+          "#issues-q2",
+          "#issues-q3"
+        ]
+      }
+    ],
+    "/reports/lending-summary": [],
+    "/reports/loan-figures": [],
+    "/reports/monthly-issues": [],
+    "/reports/stock-levels": [],
+    "/staff/branch-settings": [],
+    "/staff/bulk-actions": [],
+    "/staff/catalogue-entry": [],
+    "/staff/display-options": [],
+    "/staff/exports": [],
+    "/staff/overview": [],
+    "/staff/quick-edit": [],
+    "/staff/reports": [],
+    "/staff/rota": [],
+    "/staff/shelf-audit": [],
+    "/staff/shelf-settings": [],
+    "/staff/staffing-plan": []
+  }
+}

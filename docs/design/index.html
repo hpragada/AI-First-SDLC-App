@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edvensoft AI-First SDLC — Hi-Fi Mockup Gallery</title>
+<link rel="stylesheet" href="design-system.css">
+<link rel="stylesheet" href="components.css">
+<style>
+  .gallery { max-width: 1080px; margin: 0 auto; padding: var(--space-7) var(--space-6) var(--space-9); }
+  .gallery__hero { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+  .gallery__mark { width: 0; height: 0; border-style: solid; border-width: 0 0 22px 22px; border-color: transparent transparent transparent var(--brand-orange); }
+  .gallery__wordmark { font-size: var(--fs-h1); font-weight: 700; color: var(--brand-navy-700); }
+  .gallery__progress { display: flex; gap: var(--space-3); flex-wrap: wrap; margin: var(--space-5) 0 var(--space-7); }
+  .stat { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); min-width: 120px; }
+  .stat__num { font-size: var(--fs-h1); font-weight: 700; color: var(--text-strong); }
+  .stat__label { font-size: var(--fs-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; }
+  .group { margin-bottom: var(--space-7); }
+  .group__head { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-4); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
+  .group__title { font-size: var(--fs-h2); font-weight: 600; color: var(--text-strong); }
+  .group__sub { font-size: var(--fs-sm); color: var(--text-muted); }
+  .screens { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: var(--space-3); }
+  .screen-card { display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); padding: var(--space-3) var(--space-4); text-decoration: none; color: inherit; }
+  a.screen-card:hover { border-color: var(--brand-orange-300); text-decoration: none; }
+  .screen-card[aria-disabled="true"] { opacity: .62; box-shadow: none; }
+  .screen-card__top { display: flex; align-items: center; gap: var(--space-2); }
+  .screen-card__id { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-muted); }
+  .screen-card__name { font-size: var(--fs-sm); font-weight: 600; color: var(--text-strong); }
+  .screen-card.is-signature { border-left: 3px solid var(--brand-orange); }
+  .legend { display: flex; gap: var(--space-4); flex-wrap: wrap; font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: var(--space-6); }
+</style>
+</head>
+<body>
+<div class="gallery">
+  <div class="gallery__hero">
+    <span class="gallery__mark" aria-hidden="true"></span>
+    <span class="gallery__wordmark">edvensoft</span>
+    <span class="badge badge--navy" style="margin-left:var(--space-2)">Hi-Fi Mockup Gallery</span>
+  </div>
+  <p class="t-body u-muted" style="max-width:680px">The visual acceptance reference for the Phase-4.8 React build. Every screen is static, self-contained HTML composed only from <code class="t-mono">components.css</code> classes over the shared <code class="t-mono">shell.js</code>. Open any built screen below; each renders its default state plus every listed state, stacked and labelled.</p>
+
+  <div class="gallery__progress">
+    <div class="stat"><div class="stat__num">35<span class="u-faint" style="font-size:var(--fs-h3)"> / 35</span></div><div class="stat__label">Screens built</div></div>
+    <div class="stat"><div class="stat__num">Complete</div><div class="stat__label">Full gallery — all decisions locked</div></div>
+    <div class="stat"><div class="stat__num">★ 7</div><div class="stat__label">Signature screens</div></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="badge badge--done"><span class="status-dot"></span>Built</span> opens</span>
+    <span><span class="badge badge--done"><span class="status-dot"></span>Built</span> all 35 screens</span>
+    <span>★ = signature screen (highest design risk)</span>
+  </div>
+
+  <!-- FOUNDATION -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">Foundation</span><span class="group__sub">Batch 0 — tokens, components, shell, catalog</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-00-component-library.html">
+        <div class="screen-card__top"><span class="screen-card__id">S-00</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div>
+        <span class="screen-card__name">Component Library</span>
+      </a>
+    </div>
+  </section>
+
+  <!-- GROUP A -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">A · Identity &amp; onboarding</span><span class="group__sub">J1–J6 · Batches 3–4</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-01-signup.html"><div class="screen-card__top"><span class="screen-card__id">S-01</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Sign up</span></a>
+      <a class="screen-card" href="screens/S-02-login.html"><div class="screen-card__top"><span class="screen-card__id">S-02</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Log in</span></a>
+      <a class="screen-card" href="screens/S-03-accept-invite.html"><div class="screen-card__top"><span class="screen-card__id">S-03</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Accept invitation</span></a>
+      <a class="screen-card" href="screens/S-04-reset-password.html"><div class="screen-card__top"><span class="screen-card__id">S-04</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Forgot / reset password</span></a>
+      <a class="screen-card" href="screens/S-05-setup-checklist.html"><div class="screen-card__top"><span class="screen-card__id">S-05</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Setup checklist</span></a>
+      <a class="screen-card is-signature" href="screens/S-06-connect-machine.html"><div class="screen-card__top"><span class="screen-card__id">S-06</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Connect your machine</span></a>
+      <a class="screen-card" href="screens/S-07-users-invites.html"><div class="screen-card__top"><span class="screen-card__id">S-07</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Users &amp; invitations</span></a>
+      <a class="screen-card" href="screens/S-08-roles-matrix.html"><div class="screen-card__top"><span class="screen-card__id">S-08</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Roles &amp; memberships</span></a>
+    </div>
+  </section>
+
+  <!-- GROUP B -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">B · Project setup</span><span class="group__sub">J7–J10 · Batch 3</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-09-create-project.html"><div class="screen-card__top"><span class="screen-card__id">S-09</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Create project</span></a>
+      <a class="screen-card" href="screens/S-10-project-profile.html"><div class="screen-card__top"><span class="screen-card__id">S-10</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Project profile editor</span></a>
+      <a class="screen-card" href="screens/S-11-integrations.html"><div class="screen-card__top"><span class="screen-card__id">S-11</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Integrations grid</span></a>
+      <a class="screen-card" href="screens/S-12-connect-capability.html"><div class="screen-card__top"><span class="screen-card__id">S-12</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Connect a capability</span></a>
+      <a class="screen-card" href="screens/S-13-repositories.html"><div class="screen-card__top"><span class="screen-card__id">S-13</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Repositories</span></a>
+    </div>
+  </section>
+
+  <!-- GROUP C -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">C · The lifecycle (Tier 1 + Tier 2)</span><span class="group__sub">J11–J16 · Batches 1–2 · core of the product</span></div>
+    <div class="screens">
+      <a class="screen-card is-signature" href="screens/S-14-work-items-board.html"><div class="screen-card__top"><span class="screen-card__id">S-14</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Work Items board</span></a>
+      <a class="screen-card is-signature" href="screens/S-15-work-item-epic.html"><div class="screen-card__top"><span class="screen-card__id">S-15</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Work Item — Epic</span></a>
+      <a class="screen-card is-signature" href="screens/S-16-work-item-task.html"><div class="screen-card__top"><span class="screen-card__id">S-16</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Work Item — Task</span></a>
+      <a class="screen-card" href="screens/S-17-work-item-defect.html"><div class="screen-card__top"><span class="screen-card__id">S-17</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Work Item — Defect</span></a>
+      <a class="screen-card" href="screens/S-18-phases-runs.html"><div class="screen-card__top"><span class="screen-card__id">S-18</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Phases &amp; Runs</span></a>
+      <a class="screen-card" href="screens/S-19-run-console.html"><div class="screen-card__top"><span class="screen-card__id">S-19</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Live run console</span></a>
+      <a class="screen-card" href="screens/S-20-clarifications.html"><div class="screen-card__top"><span class="screen-card__id">S-20</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Clarifications</span></a>
+      <a class="screen-card" href="screens/S-21-gates.html"><div class="screen-card__top"><span class="screen-card__id">S-21</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Gates — list + decision</span></a>
+      <a class="screen-card" href="screens/S-22-criteria-gate.html"><div class="screen-card__top"><span class="screen-card__id">S-22</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Criteria gate (WCAG)</span></a>
+      <a class="screen-card" href="screens/S-23-task-breakdown.html"><div class="screen-card__top"><span class="screen-card__id">S-23</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Task breakdown fan-out</span></a>
+    </div>
+  </section>
+
+  <!-- GROUP D -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">D · Brownfield onboarding</span><span class="group__sub">J17–J18 · Batches 1–3</span></div>
+    <div class="screens">
+      <a class="screen-card is-signature" href="screens/S-24-onboarding-hub.html"><div class="screen-card__top"><span class="screen-card__id">S-24</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Onboarding hub</span></a>
+      <a class="screen-card" href="screens/S-25-source-documents.html"><div class="screen-card__top"><span class="screen-card__id">S-25</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Source documents</span></a>
+      <a class="screen-card is-signature" href="screens/S-26-gap-report.html"><div class="screen-card__top"><span class="screen-card__id">S-26</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Gap report</span></a>
+      <a class="screen-card" href="screens/S-27-contracts-drift.html"><div class="screen-card__top"><span class="screen-card__id">S-27</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">API contracts &amp; drift</span></a>
+    </div>
+  </section>
+
+  <!-- GROUP E -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">E · Observability &amp; recovery</span><span class="group__sub">J19–J22 · Batch 2</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-28-artifacts.html"><div class="screen-card__top"><span class="screen-card__id">S-28</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Artifacts registry</span></a>
+      <a class="screen-card" href="screens/S-29-artifact-preview.html"><div class="screen-card__top"><span class="screen-card__id">S-29</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Artifact preview</span></a>
+      <a class="screen-card" href="screens/S-30-traceability.html"><div class="screen-card__top"><span class="screen-card__id">S-30</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Traceability graph</span></a>
+      <a class="screen-card is-signature" href="screens/S-31-dashboard.html"><div class="screen-card__top"><span class="screen-card__id">S-31</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">★ Workspace Dashboard</span></a>
+      <a class="screen-card" href="screens/S-32-offline-takeover.html"><div class="screen-card__top"><span class="screen-card__id">S-32</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Offline takeover / recovery</span></a>
+    </div>
+  </section>
+
+  <!-- DEFERRED -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">Decision-gated</span><span class="group__sub">DECISION-7 &amp; DECISION-8 locked — now built</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-33-transcript.html"><div class="screen-card__top"><span class="screen-card__id">S-33</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Run transcript viewer</span></a>
+      <a class="screen-card" href="screens/S-34-export-publish.html"><div class="screen-card__top"><span class="screen-card__id">S-34</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Explicit export / publish</span></a>
+    </div>
+  </section>
+
+  <!-- 09b TEST-CASE GENERATION -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">Test automation (09b)</span><span class="group__sub">Test cases as work items — auto from Testing (09) + manual add; generate scripts via 09b</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-35-test-cases.html"><div class="screen-card__top"><span class="screen-card__id">S-35</span><span class="u-spacer"></span><span class="badge badge--queued"><span class="status-dot"></span>Design</span></div><span class="screen-card__name">Test cases (coverage tab + generate)</span></a>
+    </div>
+  </section>
+
+  <!-- WEB ACCESSIBILITY (WCAG 2.2) -->
+  <section class="group">
+    <div class="group__head"><span class="group__title">Accessibility (WCAG 2.2)</span><span class="group__sub">A person settles what the checks could not, and signs what the platform will never claim for itself</span></div>
+    <div class="screens">
+      <a class="screen-card" href="screens/S-36-a11y-review.html"><div class="screen-card__top"><span class="screen-card__id">S-36</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Accessibility review queue (SME)</span></a>
+      <a class="screen-card" href="screens/S-37-conformance-report.html"><div class="screen-card__top"><span class="screen-card__id">S-37</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Conformance / VPAT statement</span></a>
+      <a class="screen-card" href="screens/S-38-a11y-audit.html"><div class="screen-card__top"><span class="screen-card__id">S-38</span><span class="u-spacer"></span><span class="badge badge--done"><span class="status-dot"></span>Built</span></div><span class="screen-card__name">Accessibility pages &amp; audit</span></a>
+    </div>
+  </section>
+</div>
+</body>
+</html>

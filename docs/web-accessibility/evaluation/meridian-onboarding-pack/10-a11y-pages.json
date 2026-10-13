@@ -1,0 +1,397 @@
+[
+  {
+    "path": "/",
+    "title": "Welcome to Meridian Library",
+    "enabled": true
+  },
+  {
+    "path": "/about/choose-a-branch",
+    "title": "Choose a branch",
+    "enabled": true
+  },
+  {
+    "path": "/about/find-a-branch",
+    "title": "Find a branch",
+    "enabled": true
+  },
+  {
+    "path": "/about/history",
+    "title": "A short history",
+    "enabled": true
+  },
+  {
+    "path": "/about/membership",
+    "title": "Membership",
+    "enabled": true
+  },
+  {
+    "path": "/about/opening-hours",
+    "title": "Opening hours",
+    "enabled": true
+  },
+  {
+    "path": "/about/team",
+    "title": "Our team",
+    "enabled": true
+  },
+  {
+    "path": "/about/terms",
+    "title": "Terms of membership",
+    "enabled": true
+  },
+  {
+    "path": "/about/visit-us",
+    "title": "Visit us",
+    "enabled": true
+  },
+  {
+    "path": "/account/apply",
+    "title": "Apply for a card",
+    "enabled": true
+  },
+  {
+    "path": "/account/card-options",
+    "title": "Card options",
+    "enabled": true
+  },
+  {
+    "path": "/account/card-services",
+    "title": "Card services",
+    "enabled": true
+  },
+  {
+    "path": "/account/full-profile",
+    "title": "Your profile",
+    "enabled": true
+  },
+  {
+    "path": "/account/join",
+    "title": "Join the library",
+    "enabled": true
+  },
+  {
+    "path": "/account/loan-history",
+    "title": "Your borrowing",
+    "enabled": true
+  },
+  {
+    "path": "/account/my-loans",
+    "title": "My loans",
+    "enabled": true
+  },
+  {
+    "path": "/account/notifications",
+    "title": "Notifications",
+    "enabled": true
+  },
+  {
+    "path": "/account/preferences",
+    "title": "Contact preferences",
+    "enabled": true
+  },
+  {
+    "path": "/account/register",
+    "title": "Register for a card",
+    "enabled": true
+  },
+  {
+    "path": "/account/security",
+    "title": "Sign-in and security",
+    "enabled": true
+  },
+  {
+    "path": "/account/settings",
+    "title": "Account settings",
+    "enabled": true
+  },
+  {
+    "path": "/account/statements",
+    "title": "Borrowing statement",
+    "enabled": true
+  },
+  {
+    "path": "/account/update-details",
+    "title": "Update your details",
+    "enabled": true
+  },
+  {
+    "path": "/authors/featured",
+    "title": "Featured author",
+    "enabled": true
+  },
+  {
+    "path": "/authors/spotlight",
+    "title": "Author spotlight",
+    "enabled": true
+  },
+  {
+    "path": "/branches",
+    "title": "Our branches",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue",
+    "title": "Browse the catalogue",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/advanced-search",
+    "title": "Advanced search",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/all-titles",
+    "title": "All titles by branch",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/award-winners",
+    "title": "Award winners",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/browse-all",
+    "title": "All titles on the shelves",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/by-subject",
+    "title": "All titles by subject",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/filter",
+    "title": "Filter by subject",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/genres",
+    "title": "Subjects",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/new-arrivals",
+    "title": "New arrivals",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/place-hold",
+    "title": "Place a hold",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/quick-find",
+    "title": "Quick find",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/recommended",
+    "title": "Recommended this month",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/refine",
+    "title": "Refine by subject",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/reserve",
+    "title": "Reserve a copy",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/reserve-copy",
+    "title": "Reserve this copy",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/results",
+    "title": "Search results",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/search",
+    "title": "Search the catalogue",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/staff-picks",
+    "title": "Staff picks",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/subject-index",
+    "title": "Subject index",
+    "enabled": true
+  },
+  {
+    "path": "/catalogue/subject-list",
+    "title": "Subjects A to Z",
+    "enabled": true
+  },
+  {
+    "path": "/contact",
+    "title": "Contact us",
+    "enabled": true
+  },
+  {
+    "path": "/events/book-a-room",
+    "title": "Book a meeting room",
+    "enabled": true
+  },
+  {
+    "path": "/events/book-a-seat",
+    "title": "Book a seat",
+    "enabled": true
+  },
+  {
+    "path": "/events/book-club",
+    "title": "Book club",
+    "enabled": true
+  },
+  {
+    "path": "/events/calendar",
+    "title": "What's on",
+    "enabled": true
+  },
+  {
+    "path": "/events/summer-reading",
+    "title": "Summer reading challenge",
+    "enabled": true
+  },
+  {
+    "path": "/events/tickets",
+    "title": "Tickets",
+    "enabled": true
+  },
+  {
+    "path": "/health",
+    "title": "Health",
+    "enabled": false
+  },
+  {
+    "path": "/help/borrowing-guide",
+    "title": "Borrowing guide",
+    "enabled": true
+  },
+  {
+    "path": "/help/contact-us",
+    "title": "Ways to reach us",
+    "enabled": true
+  },
+  {
+    "path": "/help/faq",
+    "title": "Common questions",
+    "enabled": true
+  },
+  {
+    "path": "/help/getting-started",
+    "title": "Getting started",
+    "enabled": true
+  },
+  {
+    "path": "/help/problem-report",
+    "title": "Report a problem with an item",
+    "enabled": true
+  },
+  {
+    "path": "/help/report-a-problem",
+    "title": "Report a problem",
+    "enabled": true
+  },
+  {
+    "path": "/loans/current",
+    "title": "Current loans",
+    "enabled": true
+  },
+  {
+    "path": "/loans/history",
+    "title": "Loan history",
+    "enabled": true
+  },
+  {
+    "path": "/loans/renewals",
+    "title": "Renewals",
+    "enabled": true
+  },
+  {
+    "path": "/newsletter",
+    "title": "Newsletter",
+    "enabled": true
+  },
+  {
+    "path": "/reports/annual-review",
+    "title": "Annual review",
+    "enabled": true
+  },
+  {
+    "path": "/reports/borrowing-trends",
+    "title": "Borrowing trends",
+    "enabled": true
+  },
+  {
+    "path": "/reports/branch-comparison",
+    "title": "Branch comparison",
+    "enabled": true
+  },
+  {
+    "path": "/reports/lending-summary",
+    "title": "Lending summary",
+    "enabled": true
+  },
+  {
+    "path": "/reports/monthly-issues",
+    "title": "Monthly issues",
+    "enabled": true
+  },
+  {
+    "path": "/staff/branch-settings",
+    "title": "Branch settings",
+    "enabled": true
+  },
+  {
+    "path": "/staff/bulk-actions",
+    "title": "Bulk actions",
+    "enabled": true
+  },
+  {
+    "path": "/staff/catalogue-entry",
+    "title": "Catalogue entry",
+    "enabled": true
+  },
+  {
+    "path": "/staff/display-options",
+    "title": "Display options",
+    "enabled": true
+  },
+  {
+    "path": "/staff/exports",
+    "title": "Exports",
+    "enabled": true
+  },
+  {
+    "path": "/staff/overview",
+    "title": "Staff overview",
+    "enabled": true
+  },
+  {
+    "path": "/staff/quick-edit",
+    "title": "Quick edit",
+    "enabled": true
+  },
+  {
+    "path": "/staff/reports",
+    "title": "Staff reports",
+    "enabled": true
+  },
+  {
+    "path": "/staff/shelf-audit",
+    "title": "Shelf audit",
+    "enabled": true
+  },
+  {
+    "path": "/staff/shelf-settings",
+    "title": "Shelf settings",
+    "enabled": true
+  }
+]

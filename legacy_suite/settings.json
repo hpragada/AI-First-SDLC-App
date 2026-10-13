@@ -1,0 +1,152 @@
+{
+  "version": "2.1.0",
+  "suite": "AI First SDLC Command Suite",
+  "description": "AI-First Software Development Lifecycle \u2014 6 tracks, 21 agents, 21 slash commands, human gates throughout. Supports greenfield, brownfield, UI modernization, legacy transformation, microservices decomposition, and cross-repository workflows.",
+  "primaryTool": "Claude Code",
+  "agentModel": "sonnet",
+  "commandPrefix": "sdlc",
+  "tracks": {
+    "1-greenfield": "New project from scratch \u2014 entry: /sdlc:ideate",
+    "2-brownfield": "Existing project mid-pipeline entry \u2014 entry: /sdlc:analyze \u2192 /sdlc:onboard",
+    "3-ui-modernization": "Frontend/UI modernization (5 types) \u2014 entry: /sdlc:analyze \u2192 /sdlc:ui-modernize",
+    "4-legacy-transformation": "Legacy system transformation (6 types) \u2014 entry: /sdlc:analyze \u2192 /sdlc:legacy-transform",
+    "5-microservices": "Microservices decomposition or design \u2014 entry: /sdlc:analyze \u2192 /sdlc:microservices",
+    "6-split-repo": "Cross-repository context sharing \u2014 entry: /sdlc:context-bridge"
+  },
+  "agents": {
+    "00_onboarding": "Existing project mid-pipeline entry \u2014 maps existing docs to SDLC artifact structure",
+    "00b_context_bridge": "Cross-repository context sharing \u2014 Export and Import modes",
+    "00c_intelligent_context_extractor": "Codebase intelligence extraction \u2014 dependency graph, git analytics, auto-generated docs, architectural decisions, code health signals",
+    "00d_context_snapshot": "Session continuity \u2014 multi-session project state capture and resume",
+    "01_ideation": "Phase 1 \u2014 Concept discovery and feasibility",
+    "02_requirements": "Phase 2 \u2014 Requirements engineering",
+    "03_prd": "Phase 3 \u2014 Product Requirements Document",
+    "04_architecture": "Phase 4 \u2014 System architecture and ADRs",
+    "05_ux_design": "Phase 5 \u2014 UI/UX design and wireframes",
+    "06_task_breakdown": "Phase 6 \u2014 Sprint planning and task breakdown",
+    "07_implementation": "Phase 7 \u2014 Development with full human gates",
+    "08_code_review": "Phase 8 \u2014 Code review (Single Task, Full Sprint, Branch/PR modes)",
+    "09_testing": "Phase 9 \u2014 QA and testing",
+    "09b_test_automation_agent": "Phase 9 \u2014 QA automation scripts generation agent",
+    "10_security": "Phase 10 \u2014 Security review (SAST, SCA, SBOM, STRIDE, OWASP)",
+    "11_cicd": "Phase 11 \u2014 CI/CD pipeline design and implementation",
+    "12_deployment": "Phase 12 \u2014 Production release",
+    "13_monitoring": "Phase 13 \u2014 Observability and monitoring setup",
+    "14_retrospective": "Phase 14 \u2014 Retrospective and DORA metrics",
+    "15_ui_modernization": "Specialty Track \u2014 UI Modernization (5 types)",
+    "16_legacy_transformation": "Specialty Track \u2014 Legacy Transformation (6 types)",
+    "17_microservices_decomposition": "Specialty Track \u2014 Microservices Decomposition (3 sub-tracks)"
+  },
+  "commands": {
+    "analyze": ".claude/commands/analyze.md",
+    "onboard": ".claude/commands/onboard.md",
+    "context-bridge": ".claude/commands/context-bridge.md",
+    "snapshot": ".claude/commands/snapshot.md",
+    "ideate": ".claude/commands/ideate.md",
+    "requirements": ".claude/commands/requirements.md",
+    "prd": ".claude/commands/prd.md",
+    "architecture": ".claude/commands/architecture.md",
+    "ux-design": ".claude/commands/ux-design.md",
+    "task-breakdown": ".claude/commands/task-breakdown.md",
+    "implement": ".claude/commands/implement.md",
+    "code-review": ".claude/commands/code-review.md",
+    "test": ".claude/commands/test.md",
+    "security": ".claude/commands/security.md",
+    "cicd": ".claude/agents/11-cicd-agent.md",
+    "deploy": ".claude/commands/deploy.md",
+    "monitor": ".claude/commands/monitor.md",
+    "retrospective": ".claude/commands/retrospective.md",
+    "ui-modernize": ".claude/commands/ui-modernize.md",
+    "legacy-transform": ".claude/commands/legacy-transform.md",
+    "microservices": ".claude/commands/microservices.md"
+  },
+  "humanGates": {
+    "required": true,
+    "policy": "No phase, action, or destructive operation proceeds without explicit human approval \u2014 reply APPROVED",
+    "gateTypes": [
+      "session-start",
+      "task-selection",
+      "architecture-deviation",
+      "new-dependency",
+      "destructive-migration",
+      "task-completion",
+      "phase-completion",
+      "type-selection",
+      "audit-review",
+      "plan-approval",
+      "cutover-approval"
+    ],
+    "logLocation": "CLAUDE.md \u2014 Human Gates Log section",
+    "approvalPhrase": "APPROVED",
+    "note": "Partial agreement ('looks good', 'yes', 'ok') is not APPROVED. The exact phrase APPROVED must be used to advance past a Human Gate."
+  },
+  "sessionContinuity": {
+    "snapshotCommand": "/sdlc:snapshot",
+    "resumePhrase": "Load SESSION-SNAPSHOT.md and continue",
+    "snapshotFile": "SESSION-SNAPSHOT.md",
+    "policy": "Run /sdlc:snapshot at the end of every session. Begin every new session with the resume phrase above."
+  },
+  "codbaseIntelligenceEngine": {
+    "required_for_tracks": [
+      "ui-modernization",
+      "legacy-transformation"
+    ],
+    "recommended_for": [
+      "brownfield-projects",
+      "microservices-decomposition",
+      "any-project-with-existing-code"
+    ],
+    "intelligenceLayers": [
+      "dependency-graph \u2014 module map, PageRank centrality, architecture communities, coupling analysis",
+      "git-analytics \u2014 hotspots (churn \u00d7 complexity), ownership %, co-change pairs, bus factor",
+      "auto-generated-docs \u2014 per-module and per-file wiki, freshness scoring, semantic search",
+      "architectural-decisions \u2014 discovered from history, comments, and commit messages",
+      "code-health \u2014 dead code detection, cyclomatic complexity, unreferenced exports"
+    ],
+    "mcpTools": [
+      "get_overview() \u2014 architecture summary, module map, entry points",
+      "get_context(targets) \u2014 docs, ownership, decisions, freshness for any targets",
+      "get_risk(targets) \u2014 hotspot score, dependents, co-change partners, blast-radius",
+      "get_why(query) \u2014 architectural decisions governing a file or matching a concept",
+      "search_codebase(query) \u2014 semantic search over the full generated wiki",
+      "get_dependency_path(from, to) \u2014 connection path between two files or modules",
+      "get_dead_code() \u2014 unreachable code ranked by confidence and cleanup impact",
+      "get_architecture_diagram(module) \u2014 Mermaid diagram for repo or specific module"
+    ],
+    "artifacts": [
+      "docs/intelligence/CODEBASE-INTELLIGENCE.md",
+      "docs/intelligence/DEPENDENCY-GRAPH-SUMMARY.md",
+      "docs/intelligence/GIT-ANALYTICS.md",
+      "docs/intelligence/DEAD-CODE-REPORT.md",
+      "docs/intelligence/ARCHITECTURE-DECISIONS-REGISTER.md"
+    ],
+    "mcpPort": 7337,
+    "autoUpdateHook": "Install the engine's git commit hook for incremental updates on every commit (<30 seconds after first index)",
+    "installCommand": "pip install 'repowise[search]'",
+    "installCommandCoreOnly": "pip install 'repowise'",
+    "initCommand": "repowise init",
+    "initIndexOnlyCommand": "repowise init --index-only",
+    "serveCommand": "repowise serve",
+    "hookCommand": "repowise hook install",
+    "healthCommand": "repowise doctor",
+    "statusCommand": "repowise status",
+    "dashboard": "http://localhost:7337"
+  },
+  "ruleFiles": {
+    "behavior": ".claude/rules/RULE-BEHAVIOR.md",
+    "execution": ".claude/rules/RULE-EXECUTION.md",
+    "loadingPolicy": "Both rule files are pre-loaded via CLAUDE.md preamble. All agents apply rules from session start without per-agent re-reading.",
+    "modificationPolicy": "Do not modify either rule file without full team review \u2014 changes affect all 21 agents simultaneously."
+  },
+  "contextBridge": {
+    "modes": [
+      "export",
+      "import"
+    ],
+    "exportRepo": "Source repository that defines the API contract (typically frontend or primary service)",
+    "importRepo": "Target repository that implements the contract (typically backend, mobile, or secondary service)",
+    "bridgeFile": "CONTEXT-BRIDGE.md",
+    "versioningPolicy": "Semantic versioning \u2014 major bump for breaking changes, minor for additive, patch for corrections",
+    "stalenessPolicy": "Re-export and re-import after any sprint that changes the API contract"
+  }
+}

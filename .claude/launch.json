@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "design-gallery",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "docs/design"],
+      "port": 8137
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--host", "0.0.0.0", "--port", "5174", "--strictPort"],
+      "cwd": "frontend",
+      "port": 5174,
+      "autoPort": false,
+      "env": { "VITE_API_BASE": "http://localhost:8000/api" }
+    },
+    {
+      "name": "meridian",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Users/Msi/projects/Web-Accessibility/meridian-library-web-accessibility/server.js"],
+      "port": 4180,
+      "autoPort": false
+    }
+  ]
+}

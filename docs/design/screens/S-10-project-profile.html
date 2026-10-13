@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-10 · Project Profile — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Project profile</h1>
+        <p class="page-head__sub">Feeds every agent's context — the richer this is, the better your phases. Versioned on each save.</p>
+      </div>
+    </div>
+
+    <!-- ============ Clean ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Clean · saved v3</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--saved">✓ Saved · v3</span><button class="btn btn--primary btn--sm" disabled aria-disabled="true">Save</button></div>
+        <div class="panel__body u-stack">
+          <label class="field"><span class="field__label">Description</span><textarea class="textarea">Card payment gateway handling Stripe + Adyen, with ledger reconciliation and webhook ingestion.</textarea></label>
+          <label class="field"><span class="field__label">Domain</span><input class="input" value="Payments"></label>
+          <label class="field"><span class="field__label">Tech stack</span><textarea class="textarea" rows="6">Frontend: TypeScript 5.x, Next.js 14
+Backend: Python 3.12, Django 5.x + DRF
+Database: PostgreSQL 16
+Infra: Docker Compose, Temporal, MinIO</textarea></label>
+          <label class="field"><span class="field__label">Coding standards</span><textarea class="textarea">PEP 8 + ruff; typed Python (mypy); React function components; RLS-aware migrations.</textarea></label>
+          <div class="grid grid--2">
+            <label class="field"><span class="field__label">NFRs</span><textarea class="textarea">PCI-DSS scope; &lt;500ms webhook ack; at-least-once delivery.</textarea></label>
+            <label class="field"><span class="field__label">Constraints</span><textarea class="textarea">Stripe + Adyen parity; multi-tenant via Postgres RLS.</textarea></label>
+          </div>
+          <label class="field"><span class="field__label">Glossary</span><textarea class="textarea">SoR = system of record · WI = work item · Gate = human approval.</textarea></label>
+          <label class="field" style="margin-bottom:0"><span class="field__label">Important context</span><textarea class="textarea">Adyen rollout is Q3; keep webhook handlers vendor-agnostic.</textarea></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Draft · new project, never saved (Bugs.xlsx row 10) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Draft · new project, never saved</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--dirty">Draft · not saved yet</span><button class="btn btn--primary btn--sm">Save</button></div>
+        <div class="panel__body">
+          <label class="field" style="margin-bottom:0"><span class="field__label">Description</span><textarea class="textarea">Orders processing service.</textarea></label>
+          <p class="field__help">Saving will create v1.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Unsaved changes (dirty) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Unsaved changes · dirty</span>
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--dirty">● Unsaved changes</span><button class="btn btn--primary btn--sm">Save</button></div>
+        <div class="panel__body">
+          <label class="field" style="margin-bottom:0"><span class="field__label">Tech stack</span><textarea class="textarea" rows="6">Frontend: TypeScript 5.x, Next.js 14
+Backend: Python 3.12, Django 5.x + DRF
+Database: PostgreSQL 16, Temporal</textarea></label>
+          <p class="field__help">Saving will create v4.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Saving ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Saving</span>
+      <div class="panel"><div class="panel__header"><h2 class="panel__title">Edit profile</h2><span class="u-spacer"></span><span class="save-state save-state--saving">⟳ Saving…</span><button class="btn btn--primary btn--sm" disabled aria-disabled="true">Saving…</button></div></div>
+    </div>
+
+    <!-- ============ Validation ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Validation</span>
+      <div class="panel"><div class="panel__body">
+        <label class="field field--error" style="margin-bottom:0"><span class="field__label">Description <span class="req">*</span></span><textarea class="textarea" aria-invalid="true"></textarea><span class="field__error">A description is required — agents rely on it for every phase.</span></label>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("profile");</script>
+</body>
+</html>

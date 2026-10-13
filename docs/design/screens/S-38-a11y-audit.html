@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-38 · Accessibility audit — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Accessibility</h1>
+        <p class="page-head__sub">
+          The third tab on the Accessibility destination (gaps B1, B2, B4, B5). Before it, there
+          was no screen at all: the pages had to be registered over raw HTTP and the scan run from
+          a terminal. <strong>Built in tasks 8a, 8b and G6a–G6c, revised twice on 20 Aug</strong> (read-only state for anyone but QA&nbsp;Lead / Tech&nbsp;Lead / Admin; a <em>Waiting for a machine</em> badge on a journey nothing has claimed; what the machine needs, said before the button; and a failed load said as a failure rather than as an empty list; then, after the first live run, the two page-registration dialogs reworded after the team read them back to us wrongly — the import dialog named after its button, both accepted paste formats shown, and the single-page form no longer reading as pattern-only) — every state below is as
+          built, keyboard journeys included. The journeys panel renders whether or not any pages
+          are registered: a journey follows a test case, not the page list.
+        </p>
+      </div>
+    </div>
+
+    <!-- ============ Default · pages registered, ready to audit ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default · pages registered, an audit ready to run (B1)</span>
+
+      <div class="tabs" style="margin-bottom:var(--space-5)">
+        <button class="tab tab--active">Pages &amp; audit</button>
+        <button class="tab" onclick="location.href='S-36-a11y-review.html'">Review queue (7)</button>
+        <button class="tab" onclick="location.href='S-37-conformance-report.html'">Conformance statement</button>
+      </div>
+
+      <!-- The run strip is full width on purpose. S-36 taught us what happens when the panel a
+           person actually works in gets squeezed into a 320px rail (D-A11Y-99). -->
+      <div class="panel" style="margin-bottom:var(--space-5)">
+        <div class="panel__header">
+          <h2 class="panel__title">Run an audit</h2>
+          <span class="badge badge--done"><span class="status-dot"></span>Machine connected</span>
+        </div>
+        <div class="panel__body">
+          <p class="t-sm u-muted" style="margin-bottom:var(--space-4)">
+            The scan runs on your connected machine, not on our servers — your application is at
+            an address only your machine can reach. Nothing about it is ever sent to us except
+            what the scan writes down.
+          </p>
+          <div class="grid grid--2">
+            <div class="field">
+              <span class="field__label">Address of the running application</span>
+              <input class="input" type="text" value="http://localhost:4180">
+              <span class="field__help">
+                Pre-filled from the Preview URL on your default repository. Change it here to scan
+                a different environment — the change is not saved back to the repository.
+              </span>
+            </div>
+            <div class="field">
+              <span class="field__label">What will be visited</span>
+              <div class="kv" style="margin-top:6px">
+                <span class="t-sm">Pages in scope</span><span class="t-sm"><strong>68</strong> of 69</span>
+                <span class="t-sm">Passes</span><span class="t-sm">2 <span class="u-muted">(60 pages each)</span></span>
+                <span class="t-sm">Standard</span><span class="t-sm">WCAG 2.2 Level AA</span>
+              </div>
+            </div>
+          </div>
+          <!-- Said BEFORE the button, not after the report. The baseline's Movement section
+               compares this audit's findings with the last one's and reads as progress — which
+               is only true if both looked at the same application. Twelve failing pages taken
+               out of scope improve the numbers on their own. The document says it too, so a
+               reader who never sees this screen is not misled either. -->
+          <div class="banner banner--warning" style="margin-top:var(--space-4)">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">The page list has changed since the last audit</div>
+              1 added · 2 taken out of scope. This audit will cover 68 pages where the last one
+              covered 69, so the two are not directly comparable.
+            </div>
+          </div>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Run audit</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid--detail">
+
+        <!-- ---- main: the registered pages ---- -->
+        <div class="panel">
+          <div class="panel__header">
+            <h2 class="panel__title">Pages</h2>
+            <span class="t-sm u-muted">69 registered · 68 in scope</span>
+          </div>
+          <div class="panel__body">
+            <div class="u-row" style="margin-bottom:var(--space-4)">
+              <span class="chip chip--filter">All (69)</span>
+              <span class="chip chip--filter">In scope (68)</span>
+              <span class="chip chip--filter">Excluded (1)</span>
+              <span class="u-spacer"></span>
+              <!-- Adding ONE page leads: that is the everyday action. Importing is how a project
+                   starts, not how it is kept — and a list is the only thing that cannot express
+                   "rename this one", which is why 8b exists. -->
+              <button class="btn btn--secondary btn--sm">Add a page</button>
+              <button class="btn btn--ghost btn--sm">Import a list</button>
+            </div>
+            <table class="table table--in-panel">
+              <thead>
+                <tr><th>Path</th><th>Name</th><th>In scope</th><th>Last visited</th><th></th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="table__primary"><span class="t-mono">/</span></td>
+                  <td>Home</td>
+                  <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
+                  <td class="t-sm u-muted">18 Aug, 14:02</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
+                </tr>
+                <tr>
+                  <td class="table__primary"><span class="t-mono">/catalogue</span></td>
+                  <td>Browse the catalogue</td>
+                  <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
+                  <td class="t-sm u-muted">18 Aug, 14:02</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
+                </tr>
+                <tr>
+                  <td class="table__primary"><span class="t-mono">/account/holds</span></td>
+                  <td>My holds</td>
+                  <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
+                  <td class="t-sm u-muted">18 Aug, 14:03</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
+                </tr>
+                <!-- The toggle AND the word. A toggle that is off reads as "not set yet";
+                     Excluded is a decision somebody took about this page. -->
+                <tr>
+                  <td class="table__primary"><span class="t-mono">/admin/debug</span></td>
+                  <td>Internal debug page</td>
+                  <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span> <span class="badge badge--neutral">Excluded</span></td>
+                  <td class="t-sm u-muted">—</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
+                </tr>
+                <!-- `/events/:id` is how a developer writes "any event"; no browser can open
+                     it. Before task 8a it was asked for on every audit and reported as never
+                     opened on every audit — honest, and permanently useless. An example makes
+                     it auditable, and naming the example keeps the report from claiming a page
+                     that does not exist was checked. -->
+                <tr>
+                  <td class="table__primary"><span class="t-mono">/events/:id</span></td>
+                  <td>Event detail<div class="t-sm u-muted">checked using /events/482</div></td>
+                  <td><span class="switch"><span class="switch__track"><span class="switch__thumb"></span></span></span></td>
+                  <td class="t-sm u-muted">18 Aug, 14:03</td>
+                  <td><button class="btn btn--ghost btn--sm">Edit</button><button class="btn btn--ghost btn--sm">Remove</button></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="t-sm u-muted" style="margin-top:var(--space-3)">
+              Showing 5 of 69.
+            </p>
+          </div>
+        </div>
+
+        <!-- ---- rail: past audits ---- -->
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Past audits</h2></div>
+          <div class="panel__body--flush">
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">18 Aug, 14:02</div>
+                <div class="artifact-row__meta">68 asked for · 68 reported</div>
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--done"><span class="status-dot"></span>Complete</span>
+                  <span class="badge badge--outline">47 problems</span>
+                </div>
+              </div>
+            </div>
+            <div class="artifact-row">
+              <div class="artifact-row__main">
+                <div class="artifact-row__title">11 Aug, 09:40</div>
+                <div class="artifact-row__meta">60 asked for · 58 reported</div>
+                <!-- A finished audit that has elements NOTHING ever looked at offers them back
+                     to the machine (task R1, 21 Aug). Not the review queue's `uncertain`: that
+                     one is a check's real verdict and belongs to a person. Pressing it visits no
+                     page — everything the judge needs was stored at capture time. -->
+                <div class="u-row" style="margin-top:6px">
+                  <span class="badge badge--done"><span class="status-dot"></span>Complete</span>
+                  <span class="badge badge--orange">2 never opened</span>
+                </div>
+                <p class="t-sm u-muted" style="margin-top:12px">
+                  9 elements were never looked at &mdash; not checked and undecided, but never
+                  checked at all. They are waiting on a person in the review queue.
+                </p>
+                <div class="u-row" style="margin-top:6px">
+                  <button class="btn btn--secondary">Check the rest</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="panel__body">
+            <p class="t-sm u-muted">
+              Each audit writes an <strong>Accessibility baseline</strong> document you can open
+              from Artifacts.
+            </p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ============ Keyboard journeys · the same panel on both journeys (G6) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Keyboard journeys · the panel sits under the audit strip on this same tab — identical on greenfield and brownfield (G6c)</span>
+
+      <div class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Keyboard journeys</h2>
+          <span class="badge badge--outline">Reported, never blocking</span>
+        </div>
+        <div class="panel__body">
+          <p class="t-sm u-muted" style="margin-bottom:var(--space-4)">
+            Eight things cannot be judged from a page standing still — whether focus can get out of
+            a menu, whether you can see where you are, whether a screen reader is told when
+            something changes. They can only be answered by <em>operating</em> the application with
+            a keyboard. The industry scanner covers one of the eight.
+          </p>
+
+          <div class="banner banner--info">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">Start your application first</div>
+              A journey walks the live application, step by step. Make sure it is running at the
+              address below before you start — if nothing answers there, the run stops immediately
+              and records no steps rather than reporting on steps it never walked.
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:var(--space-5);max-width:520px">
+            <span class="field__label">Address to walk</span>
+            <input class="input" type="text" value="http://localhost:4180">
+            <span class="field__help">
+              Pre-filled from your last audit, or from the Preview URL on your repository.
+            </span>
+          </div>
+
+          <table class="table table--in-panel" style="margin-top:var(--space-4)">
+            <thead>
+              <tr><th>Test case</th><th>Steps</th><th>Last walked</th><th>Result</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="table__primary"><span class="t-mono">TC-031</span> — Register to first expense</td>
+                <td>9</td>
+                <td class="t-sm u-muted">18 Aug, 16:40</td>
+                <td><span class="badge badge--orange">2 blocked · 3 findings</span></td>
+              </tr>
+              <tr>
+                <td class="table__primary"><span class="t-mono">TC-044</span> — Borrow and return a title</td>
+                <td>6</td>
+                <td class="t-sm u-muted">—</td>
+                <td><span class="badge badge--outline">Never walked</span></td>
+              </tr>
+              <tr>
+                <td class="table__primary"><span class="t-mono">TC-052</span> — Reserve a study room</td>
+                <td>7</td>
+                <td class="t-sm u-muted">—</td>
+                <td><span class="badge badge--outline">Never walked</span></td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Walk 2 selected journeys</button>
+            <button class="btn btn--ghost">Select all walkable (3)</button>
+          </div>
+
+          <p class="t-sm u-muted" style="margin-top:var(--space-3)">
+            Up to 10 journeys at a time. Anything above that is listed and left for the next run —
+            never dropped without saying so.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Keyboard journeys · nothing to walk yet ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Keyboard journeys · nothing to walk yet — common on a project that has just onboarded</span>
+
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Keyboard journeys</h2></div>
+        <div class="panel__body">
+          <div class="empty">
+            <div class="empty__icon">⌨</div>
+            <div class="empty__title">No journeys to walk yet</div>
+            <div class="empty__text">
+              A keyboard journey follows a test case that describes a complete path through the
+              application. This project has none yet. Run the Testing phase and it will write them;
+              they appear here as soon as it does.
+            </div>
+            <div class="gate-panel__actions" style="justify-content:center">
+              <button class="btn btn--secondary" onclick="location.href='S-18-phases-runs.html'">Go to Phases &amp; runs</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Keyboard journeys · walking ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Keyboard journeys · one walking, and what a blocked step does to the ones after it</span>
+
+      <div class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">TC-031 — Register to first expense</h2>
+          <span class="badge badge--running"><span class="status-dot"></span>Walking</span>
+        </div>
+        <div class="panel__body--flush">
+          <div class="artifact-row">
+            <div class="artifact-row__main">
+              <div class="artifact-row__title">1 · Open the sign-up form</div>
+              <div class="artifact-row__meta"><span class="t-mono">/signup</span></div>
+              <div class="u-row" style="margin-top:6px"><span class="badge badge--done"><span class="status-dot"></span>Walked</span></div>
+            </div>
+          </div>
+          <div class="artifact-row">
+            <div class="artifact-row__main">
+              <div class="artifact-row__title">2 · Fill in the details and submit</div>
+              <div class="artifact-row__meta"><span class="t-mono">/signup</span></div>
+              <div class="u-row" style="margin-top:6px">
+                <span class="badge badge--done"><span class="status-dot"></span>Walked</span>
+                <span class="badge badge--orange">2 findings</span>
+              </div>
+            </div>
+          </div>
+          <div class="artifact-row" style="background:var(--brand-orange-50)">
+            <div class="artifact-row__main">
+              <div class="artifact-row__title">3 · Confirm the emailed code</div>
+              <div class="artifact-row__meta"><span class="t-mono">/verify</span></div>
+              <div class="u-row" style="margin-top:6px">
+                <span class="badge badge--failed"><span class="status-dot"></span>Blocked</span>
+              </div>
+              <p class="t-sm u-muted" style="margin-top:6px">
+                “Focus entered the code field and could not leave it — Tab, Shift+Tab and Escape all
+                kept focus inside.”
+              </p>
+            </div>
+          </div>
+          <div class="artifact-row">
+            <div class="artifact-row__main">
+              <div class="artifact-row__title">4 · Add the first expense</div>
+              <div class="artifact-row__meta"><span class="t-mono">/expenses/new</span></div>
+              <div class="u-row" style="margin-top:6px"><span class="badge badge--neutral">Never reached</span></div>
+            </div>
+          </div>
+          <div class="artifact-row">
+            <div class="artifact-row__main">
+              <div class="artifact-row__title">5 · See it on the dashboard</div>
+              <div class="artifact-row__meta"><span class="t-mono">/dashboard</span></div>
+              <div class="u-row" style="margin-top:6px"><span class="badge badge--neutral">Never reached</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel__body">
+          <div class="banner banner--info">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">Steps after a blocked one are “never reached”, not “passed”</div>
+              Nobody got that far, so nothing is known about them. These findings are tracked and
+              ticketed like any other — and they never stop a gate, because this check has not yet
+              been proven against a real application.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Empty · nothing registered yet, add pages (B2) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Empty · no pages registered yet — the import panel (B2, works for any application)</span>
+
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Import a list</h2></div>
+        <div class="panel__body">
+          <div class="banner banner--info">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">The platform cannot discover your pages</div>
+              It has no access to your application — that is deliberate. Tell it which addresses to
+              visit and it will visit exactly those, and report on anything it was asked for and
+              could not open.
+            </div>
+          </div>
+
+          <!-- ONE box, TWO accepted formats. The dropped design took a path per line with the
+               name after TWO spaces, and nothing could validate that: the path checker refuses
+               empty paths, full URLs, paths not starting with `/` and line breaks — but not
+               spaces. So a single space instead of two would register `/events/:id Event detail`
+               as a real path, reported unreachable on every audit forever.
+
+               That killed the name-on-the-line format, NOT one path per line. This mockup read
+               as though JSON were the only thing accepted, and on 2026-08-20 the team quoted it
+               back to us as the requirement — which is how a stale mockup becomes a bug report.
+               A bare path per line is accepted and always should have been (#8, 2026-08-20): a
+               line containing a space is refused by line number, which closes the hole the old
+               format opened.
+
+               The pattern is shown ONLY in the JSON half. Line mode returns bare paths, so
+               there is nowhere to say what `/events/:id` should open; demonstrating one in the
+               line half teaches the single combination the platform cannot honour (#17).
+               Team decision, 2026-08-19; corrected 2026-08-20. -->
+          <div class="field" style="margin-top:var(--space-5)">
+            <span class="field__label">Your pages</span>
+            <textarea class="textarea" rows="12">/
+/catalogue
+/about/history
+
+— or a JSON list —
+
+[{"path": "/catalogue", "title": "Browse the catalogue"},
+ {"path": "/events/:id", "example": "/events/482"}]</textarea>
+            <span class="field__help">
+              <strong>Either format works.</strong> One path per line is enough. Paste a JSON list
+              when you also want to give each page a name, say whether it is in scope, or point a
+              pattern at a real page: entries carrying <span class="t-mono">path</span>, with
+              optional <span class="t-mono">title</span>, <span class="t-mono">enabled</span>
+              (or <span class="t-mono">in_scope</span>) and <span class="t-mono">example</span>.
+              A path no browser can open — <span class="t-mono">/events/:id</span> — needs the
+              JSON form, because only it can carry the example page to visit. Anything we cannot
+              read is named back to you, never silently dropped.
+            </span>
+          </div>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Continue</button>
+            <button class="btn btn--ghost">Cancel</button>
+          </div>
+
+          <p class="t-sm u-muted" style="margin-top:var(--space-4)">
+            Importing is how a project starts. Adding or correcting one page afterwards is a row
+            in the table, not a re-paste — see <em>Edit one page</em> below.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Confirm · what this paste would do, before it does it ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Confirm · the step that stops a corrected path becoming a second page</span>
+
+      <!-- WHY THIS EXISTS. A page is identified BY ITS PATH — there is no hidden id, and the
+           database's one rule is one row per (project, path). So editing the text of a path does
+           not edit a page, it names a different one: paste a corrected list and the old page is
+           still registered, still in scope, and still audited. Equally, pasting three pages
+           meaning "add these three" would, read as a whole list, take every other page out of
+           scope. Neither can be guessed, and both are obvious the moment somebody is shown the
+           difference. So the write happens after this, never before. -->
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Ready to register</h2></div>
+        <div class="panel__body">
+          <p class="t-sm">
+            <strong>1</strong> new · <strong>3</strong> already registered, names will be updated.
+          </p>
+
+          <div class="banner banner--warning" style="margin-top:var(--space-4)">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">Some columns were not recognised</div>
+              <span class="t-mono">inScope</span> (69 entries). They will be ignored. If one of
+              them says whether a page is in scope, those pages will be audited.
+            </div>
+          </div>
+
+          <h3 class="t-h3" style="margin-top:var(--space-5)">1 page you already have is not in this list</h3>
+          <table class="table table--in-panel">
+            <thead><tr><th>Path</th><th>Name</th><th>Recorded problems</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="table__primary"><span class="t-mono">/catalogue/search</span></td>
+                <td>Search the catalogue</td>
+                <td>3</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <label class="u-row" style="align-items:flex-start;gap:8px">
+              <input type="radio" name="missing" checked>
+              <span class="t-sm"><strong>Keep it in scope</strong> — I am adding pages, not replacing the list.</span>
+            </label>
+            <label class="u-row" style="align-items:flex-start;gap:8px;margin-top:8px">
+              <input type="radio" name="missing">
+              <span class="t-sm"><strong>Take it out of scope</strong> — it is gone, or I renamed it.</span>
+            </label>
+          </div>
+
+          <div class="banner banner--info" style="margin-top:var(--space-4)">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">If you renamed a page</div>
+              Its recorded problems stay with the old address — a finding is identified by the
+              page it is on. The new one starts with no history and will need reviewing again.
+            </div>
+          </div>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Register 4 pages</button>
+            <button class="btn btn--ghost">Back</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Edit one page · what a list cannot express (8b) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Edit one page · renaming a path that has been audited</span>
+
+      <!-- WHY A ROW EDITOR AT ALL, when the paste box already registers pages. Registering works
+           BY PATH, because a pasted list carries no identities — so a corrected path adds a page
+           and leaves the old one in scope, which is what the confirm step exists to catch. Here
+           the row is named, so an edit is an edit and the ghost page cannot happen at all.
+
+           What it still cannot do is move the page's history: a finding is identified by the page
+           it was found on, so renaming leaves the problems at the old address. Rewriting those
+           keys would edit records the ledger treats as permanent. Team decision: warn and
+           proceed. -->
+      <div class="panel">
+        <div class="panel__header"><h2 class="panel__title">Edit page</h2></div>
+        <div class="panel__body">
+          <div class="field">
+            <span class="field__label">Path</span>
+            <input class="input" type="text" value="/catalogue/results">
+            <span class="field__help">
+              The path only. Where the application is running belongs to the machine auditing it
+              and changes between runs; the page does not.
+            </span>
+          </div>
+
+          <div class="banner banner--warning" style="margin-top:var(--space-4)">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">This page has a history</div>
+              3 recorded problems stay with <strong>/catalogue/search</strong>. A problem is
+              identified by the page it was found on, so <strong>/catalogue/results</strong>
+              starts with no history and will need reviewing again.
+            </div>
+          </div>
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <span class="field__label">Name</span>
+            <input class="input" type="text" value="Search the catalogue">
+            <span class="field__help">Only used to make the report readable.</span>
+          </div>
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <span class="field__label">Example page</span>
+            <input class="input" type="text" placeholder="/events/482">
+            <!-- Leads with the normal case (#18). Read scanning down the form, "Only for a
+                 pattern like /events/:id" describes the DIALOG rather than the field, and on
+                 2026-08-20 two people concluded this form accepted patterns only. Three shapes,
+                 because `normalise_path` never parses patterns — it wants a leading `/` and
+                 checks nothing else, so naming one framework's syntax read as the only one
+                 allowed. -->
+            <span class="field__help">
+              <strong>Leave this empty for a normal page.</strong> It is only needed when the
+              path above cannot be opened in a browser as written — whatever your framework
+              writes them as: <span class="t-mono">/events/:id</span>,
+              <span class="t-mono">/books/[isbn]</span>,
+              <span class="t-mono">/users/{id}/loans</span>. Give one real page that matches —
+              <span class="t-mono">/events/482</span> — and the audit visits that, while still
+              recording what it finds against the pattern above.
+            </span>
+          </div>
+
+          <label class="u-row" style="align-items:center;gap:8px;margin-top:var(--space-4)">
+            <input type="checkbox" checked>
+            <span class="t-sm">Audit this page</span>
+          </label>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Save</button>
+            <button class="btn btn--ghost">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Removing a page · usually does not remove it ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Remove · a page that has been audited is kept, and taken out of scope</span>
+
+      <!-- The rule this table has always had is disabled, never deleted: a page that stopped
+           existing is a fact about the application, and a deleted row invites someone to add it
+           back next month with no record of why it went. That protects pages that were REAL. A
+           path typed by mistake was never a page — never opened, nothing recorded against it —
+           so it simply goes, and the row does not sit on a screen people have to read forever. -->
+      <div class="panel">
+        <div class="panel__body">
+          <div class="banner banner--info">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">Kept, and taken out of scope</div>
+              <span class="t-mono">/catalogue</span> has been audited, so it is kept and taken out
+              of scope rather than deleted. What was found there stays on the record.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Running · the capture in progress, in passes (B5) ============ -->
+    <!-- BUILD STATUS, 21 Aug 2026 (item #22). The THREE TILES below are built and live, with one
+         difference the live screen makes and this fixture cannot: once the capture is in and the AI
+         half is running, the "Pass" tile becomes "Elements judged — n of m dispatched", because
+         that is what there is to know at that stage. The CONSOLE below is NOT built: screens are
+         posted one per call with no progress channel between them, so there is nothing for it to
+         read. What building it would take is written down in GAP_FIX_BUILD_PLAN.md §9.2 — do not
+         treat it as a design waiting on effort. -->
+    <div class="state-block">
+      <span class="state-block__label">Running · capture in progress — 68 pages over two passes (B5) · tiles built, console not</span>
+
+      <div class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Audit running</h2>
+          <span class="badge badge--running"><span class="status-dot"></span>Capturing</span>
+        </div>
+        <div class="panel__body">
+          <div class="grid grid--3" style="margin-bottom:var(--space-5)">
+            <div class="tile">
+              <div class="tile__label">Pass</div>
+              <div class="tile__num">2 <span class="t-sm u-muted">of 2</span></div>
+              <div class="tile__sub">60 pages per pass</div>
+            </div>
+            <div class="tile">
+              <div class="tile__label">Pages visited</div>
+              <div class="tile__num">64</div>
+              <div class="tile__sub">of 68 asked for</div>
+            </div>
+            <div class="tile">
+              <div class="tile__label">Would not open</div>
+              <div class="tile__num">1</div>
+              <div class="tile__sub">recorded, never guessed</div>
+            </div>
+          </div>
+
+          <div class="console">
+            <div class="console__line"><span class="console__ts">14:02:11</span> Pass 1 of 2 — 60 pages</div>
+            <div class="console__line"><span class="console__ts">14:02:12</span> /  · 41 elements · scanner ran</div>
+            <div class="console__line"><span class="console__ts">14:02:19</span> /catalogue · 118 elements · scanner ran</div>
+            <div class="console__line"><span class="console__ts">14:05:44</span> /admin/reports · could not open (timed out after 30s)</div>
+            <div class="console__line"><span class="console__ts">14:09:02</span> Pass 2 of 2 — 8 pages</div>
+            <div class="console__line"><span class="console__ts">14:09:31</span> /events/12 · 63 elements · scanner ran<span class="console__cursor"></span></div>
+          </div>
+
+          <p class="t-sm u-muted" style="margin-top:var(--space-4)">
+            You can leave this page. The audit carries on and the result appears under Past audits.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Complete · what the audit accounted for ============ -->
+    <!-- BUILT, 21 Aug. This is the SAME panel as the running one above, not a second one: it
+         stays on screen when the audit finishes and changes what it says, because the moment the
+         answer arrives is the worst possible moment for the panel somebody has been watching to
+         disappear. Two differences from this fixture, both deliberate: "Problems open" is THIS
+         PROJECT's standing rather than one audit's tally (a finding carries no audit key — a
+         baseline audit manufactures no Run for `last_seen_run` to point at — and the baseline
+         document is project-scoped for the same reason), and its sub-line says so. The three
+         buttons below are not built; the way through to the review queue is, when anything is
+         waiting. -->
+    <div class="state-block">
+      <span class="state-block__label">Complete · every page asked for is accounted for, including the ones that never opened</span>
+
+      <div class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Audit complete · 18 Aug, 14:02</h2>
+          <span class="badge badge--done"><span class="status-dot"></span>Complete</span>
+        </div>
+        <div class="panel__body">
+          <div class="grid grid--3" style="margin-bottom:var(--space-5)">
+            <div class="tile">
+              <div class="tile__label">Pages reported</div>
+              <div class="tile__num">67</div>
+              <div class="tile__sub">of 68 asked for</div>
+            </div>
+            <div class="tile">
+              <div class="tile__label">Problems open</div>
+              <div class="tile__num">47</div>
+              <div class="tile__sub">12 critical · 35 high</div>
+            </div>
+            <div class="tile">
+              <div class="tile__label">Waiting on a person</div>
+              <div class="tile__num">7</div>
+              <div class="tile__sub">the checks could not decide</div>
+            </div>
+          </div>
+
+          <div class="banner banner--warning">
+            <span class="banner__icon">!</span>
+            <div class="banner__body">
+              <div class="banner__title">One page was asked for and never opened</div>
+              <span class="t-mono">/admin/reports</span> — timed out after 30 seconds. It is
+              recorded as never seen, and nothing it might have contained has been treated as
+              passing. It also cannot close any problem found there before.
+            </div>
+          </div>
+
+          <div class="gate-panel__actions">
+            <button class="btn btn--primary">Read the baseline</button>
+            <button class="btn btn--secondary">Answer the 7 waiting (Review)</button>
+            <button class="btn btn--ghost">Open the fix list</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Blocked · no machine connected ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Blocked · no connected machine, so nothing can reach the application</span>
+
+      <div class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Run an audit</h2>
+          <span class="badge badge--failed"><span class="status-dot"></span>No machine connected</span>
+        </div>
+        <div class="panel__body">
+          <div class="empty">
+            <div class="empty__icon">◍</div>
+            <div class="empty__title">You have no machine connected</div>
+            <div class="empty__text">
+              The scan has to run somewhere that can reach your application. Our servers cannot —
+              that is the point. Connect the machine the application runs on and this becomes a
+              one-click job.
+              <!-- "You", not "nobody". The app can only see the CALLER's own enrollments
+                   (`list_developer_enrollments` filters by developer), so a colleague may well
+                   have one connected and this screen would not know. Claiming otherwise would
+                   be a sentence the platform cannot support. -->
+              <br><span class="t-sm u-muted">A colleague's machine may be connected — this only
+              knows about yours.</span>
+            </div>
+            <div class="gate-panel__actions" style="justify-content:center">
+              <button class="btn btn--primary" onclick="location.href='S-06-connect-machine.html'">Connect a machine</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ Read-only ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Read-only · someone who is not the accessibility reviewer sees everything and starts nothing</span>
+
+      <div class="panel">
+        <div class="panel__header">
+          <h2 class="panel__title">Pages &amp; audit</h2>
+          <span class="badge badge--neutral">Read only</span>
+        </div>
+        <div class="panel__body">
+          <div class="banner banner--info">
+            <span class="banner__icon">i</span>
+            <div class="banner__body">
+              <div class="banner__title">You are not the accessibility reviewer on this project</div>
+              You can read the pages, the audits and everything they found. Registering pages and
+              starting an audit is the QA Lead's.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ B4 · where this hangs off onboarding ============ -->
+    <div class="state-block">
+      <span class="state-block__label">B4 · the proposed new step on the onboarding hub (S-24), which is how a brownfield user finds any of this</span>
+
+      <div class="panel">
+        <div class="panel__body">
+          <div class="vstep vstep--done">
+            <div class="vstep__num vstep__num--done">5</div>
+            <div class="vstep__body">
+              <div class="vstep__title">Gap report</div>
+              <div class="vstep__desc">Approved 18 Aug — resume at Architecture.</div>
+            </div>
+          </div>
+
+          <div class="vstep vstep--active">
+            <div class="vstep__num vstep__num--active">6</div>
+            <div class="vstep__body">
+              <div class="vstep__title">Check accessibility <span class="badge badge--outline">New</span></div>
+              <div class="vstep__desc">
+                Register the pages of the application and run a first audit against WCAG 2.2 AA.
+                This tells you where the application stands before you change anything.
+              </div>
+              <div class="gate-panel__actions">
+                <button class="btn btn--primary">Set up the audit</button>
+                <button class="btn btn--ghost">Skip for now</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="vstep">
+            <div class="vstep__num">7</div>
+            <div class="vstep__body">
+              <div class="vstep__title">Resume the lifecycle</div>
+              <div class="vstep__desc">Pick up where the project left off.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-20 · Clarifications — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Clarifications</h1>
+        <p class="page-head__sub">Questions your agents are waiting on. Answering resumes the run in the same session — and nothing is billed while it waits.</p>
+      </div>
+    </div>
+
+    <!-- ============ One pending · confirm question (sample) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">One pending · confirm</span>
+      <div class="card clar-card"><div class="card__body">
+        <div class="clar-card__head">
+          <span class="wi-card__id">WI-510</span>
+          <span class="badge badge--needs-answer"><span class="status-dot"></span>Requirements · needs answer</span>
+          <span class="u-spacer"></span>
+          <span class="zero-cost">⏸ Paused — no usage billed while waiting · 6m</span>
+        </div>
+        <p class="t-body u-strong">Should the analytics dashboard support CSV export in v1?</p>
+        <p class="clar-card__why"><span class="lbl">Why I'm asking:</span> Affects the data-export NFR scope.</p>
+        <label class="check"><input type="checkbox"><span class="check__text">Yes — include CSV export in v1</span></label>
+        <div class="gate-panel__actions"><button class="btn btn--primary">Submit answer</button><button class="btn btn--ghost">Skip for now</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Multi-question ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Multi-question · text + choice + confirm</span>
+      <div class="card clar-card"><div class="card__body">
+        <div class="clar-card__head">
+          <span class="wi-card__id">WI-492</span>
+          <span class="badge badge--needs-answer"><span class="status-dot"></span>Architecture · needs answer</span>
+          <span class="u-spacer"></span>
+          <span class="zero-cost">⏸ $0 while waiting · 2m</span>
+        </div>
+        <p class="clar-card__why"><span class="lbl">Why I'm asking:</span> Three details unblock the sequence diagram.</p>
+
+        <label class="field">
+          <span class="field__label">1 · Which Confluence space should the spec publish to? <span class="req">*</span></span>
+          <input class="input" type="text" placeholder="e.g. PAY">
+        </label>
+        <label class="field">
+          <span class="field__label">2 · Preferred retry strategy for failed webhooks? <span class="req">*</span></span>
+          <select class="select"><option value="">Choose one…</option><option>Exponential backoff</option><option>Fixed interval</option><option>Dead-letter queue</option></select>
+        </label>
+        <label class="check"><input type="checkbox"><span class="check__text">3 · Require signature verification on every event (recommended)</span></label>
+        <div class="gate-panel__actions"><button class="btn btn--primary">Submit answers</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Required-field error ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Required-field error</span>
+      <div class="card clar-card"><div class="card__body">
+        <div class="clar-card__head">
+          <span class="wi-card__id">WI-492</span>
+          <span class="badge badge--needs-answer"><span class="status-dot"></span>Architecture · needs answer</span>
+        </div>
+        <label class="field field--error">
+          <span class="field__label">Which Confluence space should the spec publish to? <span class="req">*</span></span>
+          <input class="input" type="text" aria-invalid="true">
+          <span class="field__error">This answer is required before the run can resume.</span>
+        </label>
+        <div class="gate-panel__actions"><button class="btn btn--primary">Submit answers</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Already answered by someone else (collapsed) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Already answered by someone else (collapsed)</span>
+      <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-3)">
+        <span class="badge badge--done"><span class="status-dot"></span>Answered</span>
+        <span class="t-sm u-body">WI-510 · "CSV export in v1?" — answered <strong>Yes</strong> by Sarah Chen · run resumed.</span>
+        <span class="u-spacer"></span>
+        <button class="btn btn--ghost btn--sm">View</button>
+      </div></div>
+    </div>
+
+    <!-- ============ Cancelled ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Cancelled</span>
+      <div class="card"><div class="card__body" style="display:flex;align-items:center;gap:var(--space-3)">
+        <span class="badge badge--neutral"><span class="status-dot"></span>Cancelled</span>
+        <span class="t-sm u-muted">WI-487 · question withdrawn when the run was re-dispatched.</span>
+      </div></div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 6L9 17l-5-5"/></svg>
+          <div class="empty__title">No questions waiting</div>
+          <div class="empty__text">When an agent needs input, it pauses (billing $0) and the question appears here.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("clarifications");</script>
+</body>
+</html>

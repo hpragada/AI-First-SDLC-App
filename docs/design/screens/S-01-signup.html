@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-01 · Sign up — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <!-- ============ Default ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Default</span>
+      <div class="auth">
+        <div class="auth__brand">
+          <div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div>
+          <div class="auth__tagline">Run your whole software lifecycle with AI — and human approval gates.</div>
+          <div class="auth__sub">Create a workspace and you become its first admin. Teammates join by invitation.</div>
+        </div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Create your workspace</h1>
+          <p class="auth-card__sub">Start your free Edvensoft workspace.</p>
+          <label class="field"><span class="field__label">Full name</span><input class="input" type="text" placeholder="e.g. Jordan Lee"></label>
+          <label class="field"><span class="field__label">Work email</span><input class="input" type="email" placeholder="you@company.com"></label>
+          <label class="field"><span class="field__label">Password</span><input class="input" type="password" placeholder="At least 8 characters">
+            <span class="strength"><span class="strength__bar"></span><span class="strength__bar"></span><span class="strength__bar"></span><span class="strength__bar"></span></span>
+          </label>
+          <label class="field"><span class="field__label">Workspace / org name</span><input class="input" type="text" placeholder="e.g. Northwind Labs"></label>
+          <button class="btn btn--primary btn--block">Create workspace</button>
+          <div class="auth-card__foot">Already have an account? <a href="S-02-login.html">Log in</a></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Validation error (email in use) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Validation error · email in use</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Run your whole software lifecycle with AI — and human approval gates.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Create your workspace</h1>
+          <p class="auth-card__sub">Start your free Edvensoft workspace.</p>
+          <label class="field"><span class="field__label">Full name</span><input class="input" type="text" value="Sarah Chen"></label>
+          <label class="field field--error"><span class="field__label">Work email</span><input class="input" type="email" value="sarah@acme.com" aria-invalid="true"><span class="field__error">An account with this email already exists. <a href="S-02-login.html">Log in instead</a>.</span></label>
+          <label class="field"><span class="field__label">Password</span><input class="input" type="password" value="••••••••••"></label>
+          <button class="btn btn--primary btn--block">Create workspace</button>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Submitting ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Submitting</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Run your whole software lifecycle with AI — and human approval gates.</div></div>
+        <div class="auth__form"><div class="auth-card">
+          <h1 class="auth-card__title">Create your workspace</h1>
+          <p class="auth-card__sub">Setting up Acme Corp…</p>
+          <button class="btn btn--primary btn--block" disabled aria-disabled="true"><span class="spinner"></span> Creating workspace…</button>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Success → redirect ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Success → redirect to setup</span>
+      <div class="auth">
+        <div class="auth__brand"><div class="auth__brand-logo"><span class="auth__brand-mark" aria-hidden="true"></span><span class="auth__brand-word">edvensoft</span></div><div class="auth__tagline">Run your whole software lifecycle with AI — and human approval gates.</div></div>
+        <div class="auth__form"><div class="auth-card" style="text-align:center">
+          <div class="vstep__num vstep__num--done" style="margin:0 auto var(--space-3)">✓</div>
+          <h1 class="auth-card__title">Workspace created</h1>
+          <p class="auth-card__sub">Taking you to your setup checklist…</p>
+          <a href="S-05-setup-checklist.html" class="btn btn--primary btn--block">Continue</a>
+        </div></div>
+      </div>
+    </div>
+
+  </div>
+</main>
+</body>
+</html>

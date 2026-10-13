@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-21 · Gates — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad">
+
+    <div class="page-head">
+      <div class="page-head__titles">
+        <h1 class="t-h1">Gates <span class="badge badge--gate" style="vertical-align:middle">3 pending</span></h1>
+        <p class="page-head__sub">Approvals awaiting a decision. Only the required role can decide each gate — nothing reaches a system-of-record without one.</p>
+      </div>
+    </div>
+
+    <div class="tabs" style="margin-bottom:var(--space-5)">
+      <button class="tab tab--active">Pending (3)</button>
+      <button class="tab">Decided history</button>
+    </div>
+
+    <!-- ============ Can decide (your role) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Can decide · your role matches</span>
+      <div class="grid grid--detail">
+        <div class="panel">
+          <div class="panel__header"><h2 class="panel__title">Pending approvals</h2></div>
+          <div class="panel__body--flush">
+            <table class="table table--in-panel">
+              <thead><tr><th>Gate</th><th>Required role</th><th>Work item</th><th>Artifact</th></tr></thead>
+              <tbody>
+                <tr style="background:var(--brand-orange-50)"><td class="table__primary">Architecture</td><td><span class="chip badge--navy">Architect</span></td><td class="table__id">WI-492</td><td><a href="S-29-artifact-preview.html">Preview ↗</a></td></tr>
+                <tr><td class="table__primary">PM Approval</td><td><span class="chip badge--navy">Product Owner</span></td><td class="table__id">WI-511</td><td><a href="S-29-artifact-preview.html">Preview ↗</a></td></tr>
+                <tr><td class="table__primary">UX Design</td><td><span class="chip badge--navy">Designer</span></td><td class="table__id">WI-487</td><td><a href="S-22-criteria-gate.html">Preview ↗</a></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card--attention gate-panel"><div class="card__body">
+          <span class="gate-panel__role">▲ Architecture gate · required role: Architect</span>
+          <h3 class="t-h3">WI-492 · Stripe Webhook Integration</h3>
+          <p class="t-sm u-body">Reviewing: <strong>System Sequence Diagram v0.9</strong>. Approve to publish to Figma and advance to UX Design.</p>
+          <a href="S-29-artifact-preview.html" class="t-sm">Preview artifact under review ↗</a>
+          <label class="field" style="margin:var(--space-2) 0 0"><span class="field__label">Comment (optional)</span><textarea class="textarea" placeholder="Add context for your decision…"></textarea></label>
+          <div class="gate-panel__actions"><button class="btn btn--primary">Approve</button><button class="btn btn--danger">Reject</button></div>
+          <span class="gate-reassure">Decision logged with your role &amp; comment.</span>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- ============ Cannot decide (permission) ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Cannot decide · not your role</span>
+      <div class="card gate-panel"><div class="card__body">
+        <span class="gate-panel__role" style="color:var(--text-muted)">PM Approval gate · WI-511 Fix Session Timeout Logic</span>
+        <div class="banner banner--info"><span class="banner__icon">🔒</span><div class="banner__body"><div class="banner__title">Awaiting Product Owner</div>You don't hold the <strong>Product Owner</strong> role on this project, so this is read-only. <strong>Sarah Chen</strong> can decide.</div></div>
+        <a href="S-29-artifact-preview.html" class="t-sm">Preview artifact under review ↗</a>
+        <div class="gate-panel__actions"><button class="btn btn--primary" disabled aria-disabled="true">Approve</button><button class="btn btn--secondary" disabled aria-disabled="true">Reject</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Decided history ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Decided history tab</span>
+      <div class="tabs" style="margin-bottom:var(--space-4)"><button class="tab">Pending (3)</button><button class="tab tab--active">Decided history</button></div>
+      <div class="panel"><div class="panel__body--flush">
+        <table class="table table--in-panel">
+          <thead><tr><th>Gate</th><th>Work item</th><th>Decision</th><th>By</th><th>When</th></tr></thead>
+          <tbody>
+            <tr><td class="table__primary">PRD</td><td class="table__id">WI-492</td><td><span class="badge badge--done"><span class="status-dot"></span>Approved</span></td><td>Sarah Chen</td><td>1h ago</td></tr>
+            <tr><td class="table__primary">Requirements</td><td class="table__id">WI-499</td><td><span class="badge badge--done"><span class="status-dot"></span>Approved</span></td><td>Sarah Chen</td><td>2d ago</td></tr>
+            <tr><td class="table__primary">Architecture</td><td class="table__id">WI-470</td><td><span class="badge badge--failed"><span class="status-dot"></span>Rejected</span></td><td>Marcus Lee</td><td>3d ago</td></tr>
+          </tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- ============ Empty ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Empty · nothing pending</span>
+      <div class="panel">
+        <div class="empty">
+          <svg class="empty__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l8 4v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <div class="empty__title">No gates need you</div>
+          <div class="empty__text">Approvals you can act on will appear here and in the notifications bell.</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("gates");</script>
+</body>
+</html>

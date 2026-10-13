@@ -1,0 +1,74 @@
+# Backend runtime deps — exact pins (best-known-stable as of 2026-06).
+# These get frozen into a true hash-lock when first installed in T2.
+# Stack per CLAUDE.md: Python 3.12, Django 5, DRF, Postgres 16 (RLS, pgvector), Temporal.
+
+Django==5.1.4
+djangorestframework==3.15.2
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+django-environ==0.11.2
+uvicorn[standard]==0.34.0
+gunicorn==23.0.0
+
+# Durable execution (non-negotiable #8)
+temporalio==1.9.0
+
+# Engine seam (non-negotiable #7) + MCP
+claude-agent-sdk==0.1.72
+# claude-agent-sdk launches the CLI via anyio.open_process(..., user=...), whose `user` kwarg
+# only exists in anyio >= 4.5.0. The old floor let a fresh install resolve anyio 4.4.0, which
+# crashed every companion build agent at start ("open_process() got an unexpected keyword
+# argument 'user'"). Pin the working version so a clean install reproduces it (Bugs S.No 135).
+anyio==4.14.2
+# mcp 1.2.0 was too old for claude-agent-sdk 0.1.72 (needs mcp>=1.19) AND it permitted the
+# broken anyio 4.4.0; mcp 1.27.0 requires anyio>=4.5 (already the running version). Bumped to the
+# known-good set so the three resolve together (Bugs S.No 135).
+mcp==1.27.0
+# mcp 1.27.0 requires pydantic>=2.11, and pydantic was never pinned — so an environment
+# installed before the mcp bump kept pydantic 2.7 and `mcp_platform_state.server` stopped
+# IMPORTING at all: FastMCP builds an output model per tool, and pydantic 2.7's `create_model`
+# reads a bare `list[dict]` return annotation as a non-annotated attribute and raises. Nothing
+# in this repository imports pydantic itself; it is here so the version mcp needs is stated
+# rather than left to whatever a machine happens to already have.
+pydantic==2.13.4
+
+# Object store (artifact bodies in S3/MinIO)
+boto3==1.35.81
+
+# CORS for the React Experience plane (Vite dev server → API; P0-T12)
+django-cors-headers==4.9.0
+
+# Markdown → HTML for publishing artifact bodies to Confluence (P1)
+markdown==3.10.2
+
+# Static-file extraction for brownfield-lite onboarding (Word/Excel/PDF → artifacts; P1)
+python-docx==1.2.0
+openpyxl==3.1.5
+pypdf==6.14.1
+# High-fidelity PDF extraction (text+layout, tables, embedded images, page rasterization)
+# for lossless brownfield capture (onboarding_fidelity_plan Part A). pymupdf4llm gives
+# clean PDF→markdown (paragraphs + reconstructed tables); pymupdf does images + page renders.
+pymupdf==1.28.0
+pymupdf4llm==1.28.0
+# Downscale page images to a vision-sane size before the onboarding vision agent reads them
+# (onboarding_fidelity_plan Part B — LANCZOS resize keeps diagram/screenshot text crisp).
+Pillow==12.3.0
+
+# Secret-store encryption for IntegrationConnection (P4.7-T6, DECISION-4)
+cryptography==46.0.7
+
+# Security-phase scanners (Bugs S.No 185/186). Phase 10 is meant to RUN real tooling, and on the
+# live EPIC-004 run its own report said Bandit was "blocked by sandbox restrictions → full manual
+# pass performed" and the SBOM read "Manual CycloneDX Generation". Three things defeated it, and
+# this is the second: nothing was installed anywhere in the repo, so there was no provisioning
+# story at all. Declared here because the companion runs out of this same checkout and venv (see
+# runner/README.md "Prerequisites"), so a developer has them after an ordinary install rather
+# than the agent being asked to `pip install` mid-run.
+#   bandit        — SAST over Python source
+#   pip-audit     — dependency vulnerabilities against the PyPA advisory DB
+#   cyclonedx-bom — the software bill of materials
+# `npm audit` needs nothing: it ships with npm, and registry.npmjs.org is already reachable.
+# Reaching PyPI for these is the FIRST of the three causes, fixed by ProjectProfile.scan.
+bandit==1.9.4
+pip-audit==2.10.1
+cyclonedx-bom==7.3.1

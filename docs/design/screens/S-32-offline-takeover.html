@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S-32 · Offline Takeover & Recovery — Edvensoft SDLC</title>
+<link rel="stylesheet" href="../design-system.css">
+<link rel="stylesheet" href="../components.css">
+</head>
+<body>
+<main id="screen">
+  <div class="canvas-pad" style="max-width:880px">
+
+    <nav class="breadcrumb"><a href="S-18-phases-runs.html">Phases &amp; Runs</a><span class="sep">›</span><span class="here">Recovery</span></nav>
+    <div class="page-head"><div class="page-head__titles"><h1 class="t-h1">Run recovery — WI-492 · Architecture</h1><p class="page-head__sub">When your machine goes offline mid-run, the platform parks the run for takeover rather than letting it hang.</p></div></div>
+
+    <!-- ============ Parked ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Parked for takeover</span>
+      <div class="card"><div class="card__body u-stack">
+        <div class="banner banner--danger"><span class="banner__icon">⏻</span><div class="banner__body"><div class="banner__title">Your machine went offline — this run is parked for takeover</div>RUN-42 was running on <strong>Sarah's MacBook</strong>, last seen 6m ago. Nothing was lost: no artifact is published, and any answered clarifications are remembered.</div></div>
+        <dl class="kv">
+          <dt>Run</dt><dd>RUN-42 · Architecture · WI-492</dd>
+          <dt>Parked at</dt><dd>10:47 · after report timeout</dd>
+          <dt>Answered clarifications</dt><dd>1 remembered (won't be re-asked)</dd>
+        </dl>
+        <div class="banner banner--info"><span class="banner__icon">↺</span><div class="banner__body">Reconnect your machine and re-run — the phase resumes from a clean dispatch, folding in your earlier answers.</div></div>
+        <div class="gate-panel__actions"><a href="S-06-connect-machine.html" class="btn btn--primary">Reconnect &amp; re-run</a><button class="btn btn--secondary">Reassign to another machine</button></div>
+      </div></div>
+    </div>
+
+    <!-- ============ Reconnecting ============ -->
+    <div class="state-block">
+      <span class="state-block__label">Reconnecting</span>
+      <div class="card"><div class="card__body u-stack">
+        <div class="conn-status conn-status--waiting"><span class="spinner"></span>Reconnecting Sarah's MacBook… waiting for check-in</div>
+        <p class="t-sm u-muted">Once your companion is back online, re-running will pick up the parked work.</p>
+      </div></div>
+    </div>
+
+    <!-- ============ Resumed ============ -->
+    <div class="state-block" style="margin-bottom:0">
+      <span class="state-block__label">Resumed</span>
+      <div class="card"><div class="card__body u-stack">
+        <div class="banner banner--success"><span class="banner__icon">✓</span><div class="banner__body"><div class="banner__title">Run resumed</div>RUN-43 dispatched to Sarah's MacBook. Your previously answered clarification ("CSV export in v1? → Yes") was folded in automatically.</div></div>
+        <div class="console" role="log">
+          <div class="console__line"><span class="console__ts">10:52:01</span><span class="info">Re-dispatched. Companion claimed RUN-43.</span></div>
+          <div class="console__line"><span class="console__ts">10:52:04</span>Applying remembered answers… <span class="ok">[OK]</span></div>
+          <div class="console__line"><span class="console__ts">10:52:18</span>Resuming Architecture phase… <span class="console__cursor"></span></div>
+        </div>
+        <div class="gate-panel__actions"><a href="S-19-run-console.html" class="btn btn--primary">View run console</a></div>
+      </div></div>
+    </div>
+
+  </div>
+</main>
+<script src="../shell.js"></script>
+<script>shellMount("runs");</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+# Django auto-generates migrations and the tests are not the subject under test — counting
+# either distorts the number the `make cov` 90% bar is meant to police. Mirrors the ruff
+# migration exclusion below so both tools agree on what "our code" means.
+omit = ["*/migrations/*", "*/tests/*", "*/__init__.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Django auto-generates migrations; don't lint them.
+extend-exclude = ["**/migrations/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Migrated agent catalog is a wide data table — keep one row per line.
+"apps/registry/catalog.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = "config.settings"

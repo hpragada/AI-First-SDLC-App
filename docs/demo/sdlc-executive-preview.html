@@ -1,0 +1,679 @@
+<title>AI-First SDLC Platform — Executive Preview</title>
+<style>
+  /* ============================ TOKENS ============================ */
+  :root{
+    --ground:#F3F5F8; --panel:#FFFFFF; --panel-2:#EDF1F6;
+    --border:#E0E6EE; --border-strong:#CBD5E2;
+    --ink:#141C28; --ink-soft:#3C4859; --muted:#68758A; --faint:#93A0B4;
+    --azure:#2F6FEC; --azure-soft:#e7f0ff; --azure-ink:#1b4fbf;
+    --gold:#B7841A; --gold-soft:#fbf1d9; --gold-ink:#8a6210;
+    --ok:#2E9E6B; --warn:#C88A1E; --crit:#C6493B;
+    --shadow:0 1px 2px rgba(16,28,45,.06),0 12px 30px -14px rgba(16,28,45,.22);
+    --shadow-lg:0 30px 60px -24px rgba(16,28,45,.35);
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --maxw:1140px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0D1420; --panel:#141F2E; --panel-2:#1A2636;
+      --border:#26313F; --border-strong:#33404F;
+      --ink:#EAF0F7; --ink-soft:#C2CDDA; --muted:#8E9DB0; --faint:#65748A;
+      --azure:#5B93FF; --azure-soft:#16233c; --azure-ink:#9dc0ff;
+      --gold:#E7B84D; --gold-soft:#2a2213; --gold-ink:#f0ce85;
+      --ok:#48c48c; --warn:#e2a94a; --crit:#e0685a;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 34px -18px rgba(0,0,0,.7);
+      --shadow-lg:0 34px 70px -26px rgba(0,0,0,.75);
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#F3F5F8; --panel:#FFFFFF; --panel-2:#EDF1F6;
+    --border:#E0E6EE; --border-strong:#CBD5E2;
+    --ink:#141C28; --ink-soft:#3C4859; --muted:#68758A; --faint:#93A0B4;
+    --azure:#2F6FEC; --azure-soft:#e7f0ff; --azure-ink:#1b4fbf;
+    --gold:#B7841A; --gold-soft:#fbf1d9; --gold-ink:#8a6210;
+    --ok:#2E9E6B; --warn:#C88A1E; --crit:#C6493B;
+    --shadow:0 1px 2px rgba(16,28,45,.06),0 12px 30px -14px rgba(16,28,45,.22);
+    --shadow-lg:0 30px 60px -24px rgba(16,28,45,.35);
+  }
+  :root[data-theme="dark"]{
+    --ground:#0D1420; --panel:#141F2E; --panel-2:#1A2636;
+    --border:#26313F; --border-strong:#33404F;
+    --ink:#EAF0F7; --ink-soft:#C2CDDA; --muted:#8E9DB0; --faint:#65748A;
+    --azure:#5B93FF; --azure-soft:#16233c; --azure-ink:#9dc0ff;
+    --gold:#E7B84D; --gold-soft:#2a2213; --gold-ink:#f0ce85;
+    --ok:#48c48c; --warn:#e2a94a; --crit:#e0685a;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 34px -18px rgba(0,0,0,.7);
+    --shadow-lg:0 34px 70px -26px rgba(0,0,0,.75);
+  }
+
+  /* ============================ BASE ============================ */
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0;background:var(--ground);color:var(--ink);
+    font-family:var(--sans);line-height:1.6;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  }
+  h1,h2,h3,h4{margin:0;line-height:1.12;text-wrap:balance;letter-spacing:-.02em;font-weight:680}
+  p{margin:0}
+  a{color:inherit}
+  ::selection{background:var(--azure);color:#fff}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 28px}
+  .eyebrow{
+    font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--azure);font-weight:600;
+  }
+  .lede{color:var(--ink-soft);font-size:19px;max-width:60ch}
+
+  /* ============================ TOP NAV ============================ */
+  header.top{
+    position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--ground) 88%,transparent);
+    backdrop-filter:blur(12px);border-bottom:1px solid var(--border);
+  }
+  .top .wrap{display:flex;align-items:center;gap:22px;height:60px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+  .brand .mark{
+    width:26px;height:26px;border-radius:7px;flex:none;position:relative;
+    background:linear-gradient(135deg,var(--azure),var(--azure-ink));
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--azure) 40%,transparent) inset;
+  }
+  .brand .mark::after{content:"";position:absolute;inset:0;border-radius:7px;
+    background:radial-gradient(circle at 70% 75%,var(--gold) 0 22%,transparent 26%)}
+  .navlinks{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}
+  .navlinks a{
+    font-family:var(--mono);font-size:12.5px;text-decoration:none;color:var(--muted);
+    padding:7px 11px;border-radius:8px;letter-spacing:.02em;white-space:nowrap;
+    transition:color .15s,background .15s;
+  }
+  .navlinks a:hover{color:var(--ink);background:var(--panel-2)}
+  .navlinks a.active{color:var(--azure);background:var(--azure-soft)}
+  @media(max-width:860px){.navlinks{display:none}}
+
+  /* ============================ SECTION SHELL ============================ */
+  section{padding:96px 0;border-bottom:1px solid var(--border);position:relative}
+  section.hero{padding:0;border-bottom:1px solid var(--border)}
+  .reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+  .kicker{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+  .kicker .num{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .kicker .rule{height:1px;background:var(--border-strong);flex:1}
+  h2.sec{font-size:clamp(27px,3.4vw,40px);margin-bottom:14px}
+
+  /* ============================ HERO ============================ */
+  .hero-inner{
+    min-height:calc(100vh - 60px);display:flex;flex-direction:column;justify-content:center;
+    padding:80px 0;position:relative;overflow:hidden;
+  }
+  .hero-grid{
+    position:absolute;inset:0;z-index:0;pointer-events:none;opacity:.5;
+    background-image:
+      linear-gradient(color-mix(in srgb,var(--border) 60%,transparent) 1px,transparent 1px),
+      linear-gradient(90deg,color-mix(in srgb,var(--border) 60%,transparent) 1px,transparent 1px);
+    background-size:44px 44px;
+    -webkit-mask-image:radial-gradient(ellipse 80% 70% at 60% 30%,#000 30%,transparent 75%);
+    mask-image:radial-gradient(ellipse 80% 70% at 60% 30%,#000 30%,transparent 75%);
+  }
+  .hero-inner>*{position:relative;z-index:1}
+  .hero h1{font-size:clamp(34px,6vw,66px);font-weight:720;letter-spacing:-.03em;max-width:16ch}
+  .hero h1 .gold{color:var(--gold)}
+  .hero .lede{margin-top:26px;font-size:clamp(17px,2vw,21px)}
+  .hero-meta{
+    display:flex;gap:26px;flex-wrap:wrap;margin-top:44px;font-family:var(--mono);
+    font-size:12.5px;color:var(--muted);letter-spacing:.02em;
+  }
+  .hero-meta b{color:var(--ink);font-weight:600}
+  .hero-cta{display:flex;gap:14px;flex-wrap:wrap;margin-top:36px}
+  .btn{
+    font-family:var(--sans);font-size:15px;font-weight:600;text-decoration:none;cursor:pointer;
+    padding:13px 22px;border-radius:11px;border:1px solid transparent;display:inline-flex;
+    align-items:center;gap:9px;transition:transform .12s,box-shadow .15s,background .15s;
+  }
+  .btn:hover{transform:translateY(-1px)}
+  .btn-primary{background:var(--azure);color:#fff;box-shadow:var(--shadow)}
+  .btn-ghost{background:var(--panel);color:var(--ink);border-color:var(--border-strong)}
+
+  /* ============================ PILLS / CHIPS ============================ */
+  .chip{
+    font-family:var(--mono);font-size:11.5px;letter-spacing:.02em;
+    padding:4px 9px;border-radius:7px;background:var(--panel-2);color:var(--ink-soft);
+    border:1px solid var(--border);white-space:nowrap;
+  }
+  .chip.std{background:var(--azure-soft);color:var(--azure-ink);border-color:transparent}
+
+  /* ============================ CARD GRID ============================ */
+  .grid{display:grid;gap:18px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:820px){.g3,.g2{grid-template-columns:1fr}}
+  .card{
+    background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:24px;
+    box-shadow:var(--shadow);position:relative;
+  }
+  .card h3{font-size:18px;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+  .card p{color:var(--ink-soft);font-size:14.5px}
+  .card .ic{
+    width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;
+    background:var(--azure-soft);color:var(--azure);font-family:var(--mono);font-weight:700;font-size:15px;
+  }
+  .card.gate .ic{background:var(--gold-soft);color:var(--gold)}
+
+  /* ============================ PILLARS (how it thinks) ============================ */
+  .pillar{border-left:3px solid var(--azure);padding:4px 0 4px 20px}
+  .pillar.gold{border-color:var(--gold)}
+  .pillar h3{font-size:19px;margin-bottom:8px}
+  .pillar p{color:var(--ink-soft);font-size:15px;max-width:64ch}
+  .pillars{display:grid;gap:30px}
+
+  /* flow diagram */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin-top:8px;
+    border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--panel)}
+  .flow .step{flex:1;min-width:150px;padding:18px 20px;border-right:1px solid var(--border)}
+  .flow .step:last-child{border-right:none}
+  .flow .step .t{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .flow .step .h{font-size:16px;font-weight:660;margin-top:6px}
+  .flow .step.g .h{color:var(--gold)}
+  .flow .step p{font-size:13px;color:var(--muted);margin-top:5px}
+
+  /* ============================ INTELLIGENCE STACK ============================ */
+  .stack-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+  @media(max-width:820px){.stack-grid{grid-template-columns:1fr}}
+  .disclosure{
+    margin-top:26px;border:1px dashed var(--border-strong);border-radius:14px;background:var(--panel-2);
+    overflow:hidden;
+  }
+  .disclosure summary{
+    cursor:pointer;list-style:none;padding:16px 22px;display:flex;align-items:center;gap:12px;
+    font-weight:640;font-size:15px;
+  }
+  .disclosure summary::-webkit-details-marker{display:none}
+  .disclosure .lock{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    padding:3px 8px;border-radius:6px;background:var(--crit);color:#fff;font-weight:700;
+  }
+  .disclosure .chev{margin-left:auto;color:var(--muted);transition:transform .2s}
+  .disclosure[open] .chev{transform:rotate(180deg)}
+  .disclosure .body{padding:2px 22px 22px}
+  .disclosure table{width:100%;border-collapse:collapse;font-size:14px}
+  .disclosure td{padding:9px 10px;border-top:1px solid var(--border);vertical-align:top;color:var(--ink-soft)}
+  .disclosure td:first-child{font-family:var(--mono);font-size:12.5px;color:var(--ink);white-space:nowrap;width:34%}
+  .note{font-size:13px;color:var(--muted);margin-top:14px;font-style:italic}
+
+  /* ============================ LIFECYCLE EXPLORER ============================ */
+  .explorer{display:grid;grid-template-columns:300px 1fr;gap:26px;align-items:start}
+  @media(max-width:900px){.explorer{grid-template-columns:1fr}}
+  .rail{position:sticky;top:76px;display:flex;flex-direction:column;gap:22px}
+  @media(max-width:900px){.rail{position:static}}
+  .act .act-h{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);margin-bottom:9px;display:flex;align-items:center;gap:8px}
+  .act .act-h::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--azure)}
+  .node{
+    width:100%;text-align:left;cursor:pointer;background:var(--panel);border:1px solid var(--border);
+    border-radius:11px;padding:11px 13px;display:flex;align-items:center;gap:11px;margin-bottom:7px;
+    transition:border-color .15s,background .15s,transform .1s;font-family:var(--sans);color:var(--ink);
+  }
+  .node:hover{border-color:var(--border-strong);transform:translateX(2px)}
+  .node.sel{border-color:var(--azure);background:var(--azure-soft);box-shadow:var(--shadow)}
+  .node .code{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--azure);flex:none;width:26px}
+  .node .nm{font-size:13.5px;font-weight:600;line-height:1.25}
+  .node .gate-dot{margin-left:auto;width:9px;height:9px;border-radius:50%;background:var(--gold);flex:none;
+    box-shadow:0 0 0 3px var(--gold-soft)}
+  .node.entry .code{color:var(--muted)}
+
+  .detail{
+    background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:30px 32px;
+    box-shadow:var(--shadow-lg);min-height:520px;
+  }
+  .detail .d-eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--azure);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .detail .d-eyebrow .track{padding:2px 8px;border-radius:6px;background:var(--azure-soft);color:var(--azure-ink);font-weight:600}
+  .detail .d-eyebrow .track.entry{background:var(--panel-2);color:var(--muted)}
+  .detail h3.d-name{font-size:clamp(24px,3vw,31px);margin:14px 0 12px;letter-spacing:-.02em}
+  .detail .d-one{font-size:17px;color:var(--ink-soft);max-width:62ch}
+  .d-section-t{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--faint);margin:28px 0 14px;display:flex;align-items:center;gap:10px}
+  .d-section-t .ln{height:1px;background:var(--border);flex:1}
+  .steps{display:flex;flex-direction:column;gap:11px;list-style:none;padding:0;margin:0;counter-reset:s}
+  .steps li{display:flex;gap:14px;align-items:flex-start;color:var(--ink-soft);font-size:15px}
+  .steps li::before{
+    counter-increment:s;content:counter(s,decimal-leading-zero);font-family:var(--mono);font-size:11px;
+    font-weight:700;color:var(--azure);background:var(--azure-soft);border-radius:6px;
+    padding:3px 6px;flex:none;margin-top:2px;
+  }
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .d-out{display:flex;flex-wrap:wrap;gap:7px}
+  .d-out .chip{background:var(--panel-2)}
+  .gate-callout{
+    margin-top:28px;background:var(--gold-soft);border:1px solid color-mix(in srgb,var(--gold) 35%,transparent);
+    border-radius:13px;padding:16px 18px;display:flex;gap:14px;align-items:center;
+  }
+  .gate-callout .seal{
+    width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;
+    background:var(--gold);color:#fff;font-size:19px;box-shadow:0 0 0 4px var(--gold-soft);
+  }
+  .gate-callout .gc-t{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-ink);font-weight:700}
+  .gate-callout .gc-b{font-size:15px;font-weight:620;color:var(--ink);margin-top:2px}
+
+  /* ============================ GREENFIELD VS BROWNFIELD ============================ */
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:820px){.compare{grid-template-columns:1fr}}
+  .lane{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:26px;box-shadow:var(--shadow)}
+  .lane.ready{border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
+  .lane .badge{
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;
+    padding:4px 10px;border-radius:7px;display:inline-block;margin-bottom:14px;
+  }
+  .lane.ready .badge{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+  .lane.avail .badge{background:var(--panel-2);color:var(--muted)}
+  .lane h3{font-size:21px;margin-bottom:10px}
+  .lane ul{margin:16px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+  .lane li{display:flex;gap:11px;font-size:14.5px;color:var(--ink-soft);align-items:flex-start}
+  .lane li .tick{color:var(--ok);flex:none;font-weight:700}
+  .lane.avail li .tick{color:var(--azure)}
+
+  /* value strip */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+  @media(max-width:820px){.metrics{grid-template-columns:repeat(2,1fr)}}
+  .metric{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px;box-shadow:var(--shadow)}
+  .metric .big{font-size:34px;font-weight:720;letter-spacing:-.03em;color:var(--azure)}
+  .metric .lb{font-size:13.5px;color:var(--muted);margin-top:6px}
+
+  /* close */
+  .close-cta{text-align:center;max-width:60ch;margin:0 auto}
+  .close-cta h2{font-size:clamp(28px,4vw,44px);margin-bottom:18px}
+
+  footer{padding:40px 0;color:var(--faint);font-size:13px;font-family:var(--mono)}
+  footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+
+  :focus-visible{outline:2px solid var(--azure);outline-offset:2px;border-radius:6px}
+</style>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><span class="mark"></span> AI-First SDLC Platform</div>
+    <nav class="navlinks" id="nav">
+      <a href="#overview">Overview</a>
+      <a href="#thinking">How it thinks</a>
+      <a href="#stack">Intelligence</a>
+      <a href="#journey">The journey</a>
+      <a href="#coverage">Coverage</a>
+      <a href="#close">Value</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ============================ HERO ============================ -->
+<section class="hero" id="top">
+  <div class="hero-grid"></div>
+  <div class="wrap hero-inner">
+    <div class="eyebrow reveal">Executive Preview · Prepared for the COO</div>
+    <h1 class="reveal" style="transition-delay:.05s">Run software delivery like an <span class="gold">operation</span> — an expert at every desk, a human at every gate.</h1>
+    <p class="lede reveal" style="transition-delay:.12s">One platform takes a raw idea all the way to a live release through the complete professional software lifecycle — operated end-to-end by specialist AI, and governed at every step by your team.</p>
+    <div class="hero-meta reveal" style="transition-delay:.18s">
+      <span><b>13</b> lifecycle phases</span>
+      <span><b>16</b> specialist agents</span>
+      <span><b>Every artifact</b> reviewed &amp; human-approved</span>
+      <span><b>Greenfield</b> ready today</span>
+    </div>
+    <div class="hero-cta reveal" style="transition-delay:.24s">
+      <a class="btn btn-primary" href="#journey">Explore the lifecycle →</a>
+      <a class="btn btn-ghost" href="#thinking">How the intelligence works</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ OVERVIEW / PITCH ============================ -->
+<section id="overview">
+  <div class="wrap">
+    <div class="kicker reveal"><span class="num">01</span><span class="rule"></span></div>
+    <h2 class="sec reveal">What it is — and why it matters</h2>
+    <p class="lede reveal" style="margin-bottom:38px">Think of it as a fully-staffed software delivery team that never skips a step. Each phase of building software is run by an AI agent that is a specialist in that discipline — and each one hands its work to your people for approval before anything moves forward.</p>
+
+    <div class="grid g3">
+      <div class="card reveal">
+        <h3><span class="ic">◆</span>What it does</h3>
+        <p>Carries a product from the first idea through requirements, architecture, design, build, testing, security, and release — as one continuous, traceable flow instead of scattered hand-offs across tools and teams.</p>
+      </div>
+      <div class="card reveal" style="transition-delay:.06s">
+        <h3><span class="ic">↑</span>How it helps you</h3>
+        <p>Compresses delivery timelines dramatically while <em>raising</em> the quality bar: every phase applies recognised industry standards, nothing is skipped, and every decision is documented and traceable back to a requirement.</p>
+      </div>
+      <div class="card reveal" style="transition-delay:.12s">
+        <h3><span class="ic">✦</span>How intelligent it is</h3>
+        <p>Every agent reasons from a named evidence base — the same frameworks a senior expert would cite — and reads your project's real context before it acts, rather than working from generic assumptions.</p>
+      </div>
+      <div class="card gate reveal">
+        <h3><span class="ic">⚖</span>Human in the loop</h3>
+        <p>Nothing auto-publishes. Every artifact moves <b>draft → reviewed → gated → published</b>, and nothing reaches your real systems of record until the right person has approved the gate. The AI proposes; your team decides.</p>
+      </div>
+      <div class="card gate reveal" style="transition-delay:.06s">
+        <h3><span class="ic">⌕</span>The assumption protocol</h3>
+        <p>Agents never invent missing facts. Each one runs a <em>context-gap scan</em> first, clearly labels what is <b>confirmed</b> versus <b>inferred</b>, and raises a clarification for a human whenever the truth isn't known — so guesses can't silently become decisions.</p>
+      </div>
+      <div class="card reveal" style="transition-delay:.12s">
+        <h3><span class="ic">⧉</span>Full traceability</h3>
+        <p>The platform remembers everything: every artifact, version, decision and approval is recorded and linked. You can trace any line of the final product back through design and architecture to the original requirement that asked for it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ HOW IT THINKS ============================ -->
+<section id="thinking">
+  <div class="wrap">
+    <div class="kicker reveal"><span class="num">02</span><span class="rule"></span></div>
+    <h2 class="sec reveal">How it thinks — governed intelligence</h2>
+    <p class="lede reveal" style="margin-bottom:44px">Two ideas make the platform trustworthy: the agents are genuinely expert, and they are never left unsupervised. Here is the discipline behind both.</p>
+
+    <div class="pillars">
+      <div class="pillar reveal">
+        <h3>Evidence-based, not improvised</h3>
+        <p>Each agent works from the established standards of its craft — ISO/IEC/IEEE requirements engineering, the C4 architecture model, OWASP and STRIDE for security, WCAG for accessibility, INVEST for user stories, the Test Pyramid for QA. It reasons the way a seasoned specialist reasons, and it shows its evidence.</p>
+      </div>
+      <div class="pillar gold reveal" style="transition-delay:.05s">
+        <h3>A human at every gate</h3>
+        <p>Work is organised as review gates, each owned by a real role — Product Owner, Architect, Designer, Tech Lead, QA Lead, Security Engineer, DevOps. An agent's output is a <em>proposal</em> until the accountable person approves it. Approval is what lets work advance and what lets anything touch your live tools.</p>
+      </div>
+      <div class="pillar gold reveal" style="transition-delay:.1s">
+        <h3>No hallucinated facts — the assumption protocol</h3>
+        <p>Before producing anything, an agent scans for the context it's missing and surfaces those gaps instead of filling them with plausible-sounding invention. Everything it does produce is labelled confirmed or inferred, so reviewers always know exactly what to double-check.</p>
+      </div>
+      <div class="pillar reveal" style="transition-delay:.15s">
+        <h3>Perfect, shared memory</h3>
+        <p>Every phase writes to a living project knowledge base, and every later phase reads from it. The architecture agent knows exactly what the requirements agent decided; the security agent reviews against the real design. Context is never lost between hand-offs.</p>
+      </div>
+    </div>
+
+    <div class="d-section-t reveal" style="margin-top:56px">The gate model <span class="ln"></span></div>
+    <div class="flow reveal">
+      <div class="step"><div class="t">Step 1</div><div class="h">Draft</div><p>The agent produces the work using its evidence base and your project context.</p></div>
+      <div class="step"><div class="t">Step 2</div><div class="h">Reviewed</div><p>The output is presented for a person to read, question, and refine.</p></div>
+      <div class="step g"><div class="t">Step 3 · Human gate</div><div class="h">Gated</div><p>The accountable role approves — or sends it back. Nothing advances without this.</p></div>
+      <div class="step"><div class="t">Step 4</div><div class="h">Published</div><p>Only now does approved work move to your systems of record and unlock the next phase.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ INTELLIGENCE STACK ============================ -->
+<section id="stack">
+  <div class="wrap">
+    <div class="kicker reveal"><span class="num">03</span><span class="rule"></span></div>
+    <h2 class="sec reveal">The intelligence behind it</h2>
+    <p class="lede reveal" style="margin-bottom:38px">Enterprise-grade foundations, built for security and scale — described here at the level that matters to you as a customer.</p>
+
+    <div class="stack-grid">
+      <div class="card reveal">
+        <h3><span class="ic">✦</span>Frontier AI reasoning</h3>
+        <p>The specialist agents are powered by Claude — among the most capable AI models available — directed by carefully engineered expertise for each software discipline.</p>
+      </div>
+      <div class="card reveal" style="transition-delay:.05s">
+        <h3><span class="ic">⧉</span>A living knowledge index</h3>
+        <p>A searchable, meaning-aware index of your entire project (concept-based, vector-powered) gives every agent instant, accurate recall of prior decisions — no re-reading, no lost context.</p>
+      </div>
+      <div class="card reveal" style="transition-delay:.1s">
+        <h3><span class="ic">⇄</span>Operates your real tools</h3>
+        <p>A connector layer lets the platform work inside your actual systems of record — issue trackers, doc stores, design tools, source control — rather than trapping work in yet another silo.</p>
+      </div>
+      <div class="card gate reveal" style="transition-delay:.15s">
+        <h3><span class="ic">⛨</span>Secure, multi-tenant by design</h3>
+        <p>Every client's data is strictly isolated at the data layer, and every action is durable and recoverable — long-running work survives interruptions and picks up exactly where it left off.</p>
+      </div>
+    </div>
+
+    <details class="disclosure">
+      <summary><span class="lock">Team notes</span> Full technical stack — do not screen-share <span class="chev">▾</span></summary>
+      <div class="body">
+        <p class="note" style="margin-top:0">Internal reference for the presenting team's own Q&amp;A prep. This detail is deliberately kept off the customer-facing slides.</p>
+        <table>
+          <tr><td>Backend</td><td>Python 3.12 · Django 5 + Django REST Framework</td></tr>
+          <tr><td>Database</td><td>PostgreSQL 16 with Row-Level Security (tenant isolation) + pgvector (the knowledge index)</td></tr>
+          <tr><td>Agent runtime</td><td>Claude Agent SDK, invoked through a swappable execution-driver interface (engine-agnostic)</td></tr>
+          <tr><td>Orchestration</td><td>Temporal durable workflows — resumable, long-running agent runs</td></tr>
+          <tr><td>Agent tooling</td><td>A Platform-State MCP server exposing capability tools (state, artifacts, gates) to the agents</td></tr>
+          <tr><td>Connectors</td><td>Capability interfaces (tasktracker / docstore / etc.) — vendors like Jira/Confluence/Figma/Git are swappable behind them</td></tr>
+          <tr><td>Frontend</td><td>React + Vite + TypeScript</td></tr>
+          <tr><td>Object store</td><td>S3-compatible (MinIO locally) for artifact drafts &amp; snapshots</td></tr>
+          <tr><td>Local execution</td><td>A companion runner executes build phases on the developer's own machine / subscription</td></tr>
+        </table>
+      </div>
+    </details>
+  </div>
+</section>
+
+<!-- ============================ LIFECYCLE EXPLORER ============================ -->
+<section id="journey">
+  <div class="wrap">
+    <div class="kicker reveal"><span class="num">04</span><span class="rule"></span></div>
+    <h2 class="sec reveal">The Greenfield journey — meet the team</h2>
+    <p class="lede reveal" style="margin-bottom:36px">A new product travels through five acts and thirteen phases. Select any phase to see exactly what its agent does behind the scenes, the standards it works from, and who signs it off. <span style="color:var(--gold)">◕</span> marks a human approval gate.</p>
+
+    <div class="explorer reveal">
+      <div class="rail" id="rail"><!-- built by JS --></div>
+      <div class="detail" id="detail"><!-- built by JS --></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ COVERAGE ============================ -->
+<section id="coverage">
+  <div class="wrap">
+    <div class="kicker reveal"><span class="num">05</span><span class="rule"></span></div>
+    <h2 class="sec reveal">Two ways in — both covered</h2>
+    <p class="lede reveal" style="margin-bottom:36px">The platform supports building from scratch and taking over an existing codebase. Today's demo walks the greenfield flow, which is ready end-to-end.</p>
+
+    <div class="compare">
+      <div class="lane ready reveal">
+        <span class="badge">● Ready today — shown in this demo</span>
+        <h3>Greenfield — from a blank page</h3>
+        <p style="color:var(--ink-soft);font-size:15px">Start with nothing but an idea and let the full lifecycle run: ideation → requirements → PRD → architecture → UX → task breakdown → implementation → code review → testing → security → CI/CD → deployment.</p>
+        <ul>
+          <li><span class="tick">✓</span> The complete 13-phase flow, live and working</li>
+          <li><span class="tick">✓</span> Every phase gated by the right human role</li>
+          <li><span class="tick">✓</span> Single-repo and multi-repo products supported</li>
+          <li><span class="tick">✓</span> Full artifact history and traceability from day one</li>
+        </ul>
+      </div>
+      <div class="lane avail reveal" style="transition-delay:.06s">
+        <span class="badge">◇ Available — bringing in existing work</span>
+        <h3>Brownfield — adopt what exists</h3>
+        <p style="color:var(--ink-soft);font-size:15px">Three entry agents ingest an in-flight project — docs, tickets, designs, tests, and code — map it to the platform, and resume the lifecycle from the right phase.</p>
+        <ul>
+          <li><span class="tick">→</span> <b>Onboarding</b> — discovers and reconciles everything a project already has</li>
+          <li><span class="tick">→</span> <b>Context Bridge</b> — locks the shared API contract across split repositories</li>
+          <li><span class="tick">→</span> <b>Codebase Intelligence</b> — turns undocumented code into a queryable knowledge base</li>
+          <li><span class="tick">→</span> Then joins the same governed lifecycle as greenfield</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ VALUE / CLOSE ============================ -->
+<section id="close" style="border-bottom:none">
+  <div class="wrap">
+    <div class="metrics reveal" style="margin-bottom:64px">
+      <div class="metric"><div class="big">13</div><div class="lb">professional phases, run end-to-end</div></div>
+      <div class="metric"><div class="big">100%</div><div class="lb">of outputs pass a human gate before publishing</div></div>
+      <div class="metric"><div class="big">0</div><div class="lb">facts invented — gaps are surfaced, not guessed</div></div>
+      <div class="metric"><div class="big">1</div><div class="lb">continuous, fully-traceable flow of record</div></div>
+    </div>
+    <div class="close-cta reveal">
+      <div class="eyebrow" style="justify-content:center">The takeaway</div>
+      <h2 style="margin-top:14px">Expert speed. Enterprise discipline. Your team in control.</h2>
+      <p class="lede" style="margin:0 auto">The platform does the expert work of an entire delivery organisation — and hands every decision to your people at exactly the right moment. That is how you move fast without giving up control.</p>
+      <div class="hero-cta" style="justify-content:center;margin-top:34px">
+        <a class="btn btn-primary" href="#journey">Walk the lifecycle again →</a>
+        <a class="btn btn-ghost" href="#top">Back to top</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>AI-First SDLC Platform — Executive Preview</span>
+    <span>Confidential · for internal &amp; invited-customer use</span>
+  </div>
+</footer>
+
+<script>
+/* ============================ AGENT DATA ============================ */
+const ACTS = [
+  {name:"Envision", phases:["01","02","03"]},
+  {name:"Design",   phases:["04","05","06"]},
+  {name:"Build",    phases:["07","08"]},
+  {name:"Assure",   phases:["09","09b","10"]},
+  {name:"Ship",     phases:["11","12"]},
+  {name:"Entry points · Brownfield", phases:["00","00b","00c"]},
+];
+
+const AGENTS = {
+"01":{name:"Ideation Agent",track:"Envision",gate:"Product Owner sign-off",
+  one:"Transforms a raw business idea into a fully documented, evidence-backed product concept — the approved foundation for everything that follows.",
+  steps:["Runs a context-gap scan first, surfacing every unknown business input before writing anything — never filling gaps with invented data.","Frames the core problem, maps user opportunities, and selects the highest-severity target.","Generates three genuinely different solution approaches and recommends one, with explicit rationale and riskiest-assumption analysis.","Assesses feasibility across technical, economic, operational and schedule dimensions.","Sizes the market bottom-up (TAM/SAM/SOM) with a real competitive analysis, including the 'do nothing' option."],
+  ev:["Jobs-to-be-Done","BABOK v3","TAM / SAM / SOM"],
+  out:["Project Concept","Feasibility Report","Stakeholder Map","Success Metrics","Market Sizing"]},
+"02":{name:"Requirements Agent",track:"Envision",gate:"Product Owner sign-off",
+  one:"Turns the approved concept into a complete, traceable, testable set of requirements — zero ambiguity, no unquantified targets.",
+  steps:["Defines the system boundary and every external actor before writing a single requirement.","Elicits requirements per stakeholder group, then writes user stories validated against INVEST quality criteria.","Writes every requirement in precise SHALL/SHOULD/MAY form — atomic, testable, traceable to a story.","Separates domain business rules (each tied to its authority) from software requirements.","Quantifies every non-functional requirement with a numeric target and a measurement method."],
+  ev:["ISO/IEC/IEEE 29148","ISO/IEC 25010","INVEST","BDD Given/When/Then","WCAG 2.1 AA"],
+  out:["Requirements Specification","User Stories","Use Cases","Business Rules","Traceability Matrix"]},
+"03":{name:"PRD Agent",track:"Envision",gate:"Product Owner sign-off",
+  one:"Synthesises all discovery work into a single authoritative Product Requirements Document — the north-star spec governing every downstream decision.",
+  steps:["Scans upstream artifacts for conflicts, gaps and ambiguities, and resolves them before writing.","Assesses the four product risks — value, usability, feasibility, business viability — each with a mitigation plan.","Links to (rather than duplicates) upstream work, keeping the PRD a synthesis and an argument, not a dump.","Specifies feature-level success metrics, an instrumentation plan, and a staged feature-flag rollout.","Enforces a glossary so every domain term has one precise, unambiguous definition."],
+  ev:["SVPG / Inspired","Working Backwards","Four product risks","OKRs"],
+  out:["Product Requirements Document","Glossary","Analytics Plan"]},
+"04":{name:"Architecture Agent",track:"Design",gate:"Architect approval",
+  one:"Designs the complete technical blueprint — every decision traced back to a specific requirement or quality target and recorded as a decision record.",
+  steps:["Selects the architecture pattern from real constraints, not trends, and records the rationale.","Maps every non-functional requirement to a named architectural response — nothing left assumed.","Produces layered system diagrams (context, container, component) plus data model and API design.","Runs capacity-planning math to prove the design meets peak load with headroom.","Designs security in from the start — auth, encryption, and an OWASP Top 10 mitigation table."],
+  ev:["C4 Model","Architecture Decision Records","12-Factor App","OWASP Top 10 + ASVS","TOGAF","ISO/IEC 25010"],
+  out:["Architecture + diagrams","Data Model","API Spec","Tech Stack","Decision Records","Security Architecture"]},
+"05":{name:"UX Design Agent",track:"Design",gate:"Designer review + user validation",
+  one:"Designs the complete user experience — every screen, state and interaction — traced to a validated user need, with full accessibility compliance.",
+  steps:["Maps end-to-end journeys per persona, including emotional state, friction points, and error/edge paths — not just the happy path.","Defines information architecture and a complete screen inventory tied to user stories.","Specifies every screen in all states — default, loading, empty, error, success — as interactive wireframes.","Builds a design system where every colour, type and component carries a usage rule.","Runs a cognitive walkthrough to catch usability failures before they become build cost."],
+  ev:["WCAG 2.1 AA","Double Diamond","Atomic Design","ISO 9241-11","Cognitive Walkthrough"],
+  out:["UX Design Spec","User Journeys","Wireframes (all states)","Design System","Accessibility Spec"]},
+"06":{name:"Task Breakdown Agent",track:"Design",gate:"Tech Lead approval",
+  one:"Decomposes the approved plans into an atomically-sized, estimated, dependency-mapped backlog loaded into realistic sprints.",
+  steps:["Calibrates real team capacity and velocity — including a first-sprint ramp-up discount — before defining any work.","Groups work into business-value epics, then breaks each story into atomic, verifiable tasks with acceptance criteria.","Maps dependencies and identifies the critical path so work can be parallelised safely.","Allocates risk buffers and time-boxed 'spike' investigations for anything new to the team.","Loads sprints to no more than 80% of capacity and writes a binding Definition of Done."],
+  ev:["INVEST","Scrum Guide","Critical Path Method","Story points","Kanban WIP"],
+  out:["Prioritised Backlog","Sprint Plan","Definition of Done","Dependency Map"]},
+"07":{name:"Implementation Agent",track:"Build",gate:"Reviewer merge-gate approval",
+  one:"Implements one work item at a time to production standard — clean, fully-tested code that strictly follows the approved architecture.",
+  steps:["Confirms exact scope and reads the architecture/design context before writing any code — never expands the task.","Studies existing code patterns first so new code matches the codebase.","Writes code and tests together, targeting ≥90% coverage, with explicit error handling and no hardcoded secrets.","Stops and raises a human decision for any architecture deviation, new dependency, or destructive database change.","For UI work, faithfully reproduces every wireframe state and verifies each acceptance criterion before reporting done."],
+  ev:["Clean Code & SOLID","Test-Driven Development","Strangler Fig","Conventional Commits","Trunk-based dev"],
+  out:["Implemented, tested code change","Completion summary"]},
+"08":{name:"Code Review Agent",track:"Build",gate:"Reviewer merge-gate approval",
+  one:"Reviews each change across eleven quality dimensions with a precise three-tier severity model — a mentor that explains the 'why' behind every finding.",
+  steps:["Verifies automated checks, then reviews correctness against the acceptance criteria and Definition of Done.","Reads the actual code paths for all ten OWASP Top 10 categories — never pattern-matching from memory.","Checks dependency licences and CVEs, performance (N+1 queries, pagination), readability and test quality.","For frontend work, checks fidelity to the approved wireframe and WCAG accessibility.","Classifies every finding as Critical, Warning or Suggestion, written in plain, actionable language."],
+  ev:["Google Code Review","OWASP Code Review + Top 10","DORA / Accelerate","Clean Code","WCAG 2.1 AA"],
+  out:["Code Review report","Structured findings","Approve / conditions / changes-required verdict"]},
+"09":{name:"Testing & QA Agent",track:"Assure",gate:"QA Lead + Product Owner UAT sign-off",
+  one:"Runs the full QA lifecycle — coverage map through functional, E2E, performance, security-smoke, accessibility and regression — up to UAT sign-off.",
+  steps:["Builds a requirements-traceability coverage map first, so no requirement goes unverified.","Writes formal test cases covering happy path, negative path, boundaries, authorization and concurrency.","Runs load tests with proper warm-up against the quantified performance targets, reporting real numbers vs target.","Executes OWASP security smoke tests and accessibility scans against WCAG 2.1 AA.","Documents every defect with severity and reproduction steps; prepares UAT scenarios for sign-off."],
+  ev:["Test Pyramid","IEEE 829","Shift-left testing","ISTQB","OWASP Testing Guide","WCAG 2.1 AA"],
+  out:["Test Plan","Test Cases","Test Report","UAT sign-off package"]},
+"09b":{name:"Test Automation Agent",track:"Assure",gate:"QA Lead approval",
+  one:"Generates a complete, runnable automated test script per test case — using real element locators discovered from the live application.",
+  steps:["Reads and validates the formal test-case spec, stopping if any step or data value is ambiguous.","Navigates the live application to inspect the real interface and extract genuine element locators — never guessing.","Detects existing test scaffolding so it builds on infrastructure rather than overwriting it.","Generates fully compilable scripts following the Page Object Model in the project's own framework.","Attempts a dry-run compile / type-check and fixes issues before handing off."],
+  ev:["Page Object Model","SOLID for tests","W3C WebDriver","Playwright best practices"],
+  out:["Runnable automation scripts + page objects","Generation report"]},
+"10":{name:"Security Agent",track:"Assure",gate:"Security Engineer approval",
+  one:"Performs a comprehensive adversarial security review — thinking like an attacker first — across nine tracks, allowing no open Critical or High findings before release.",
+  steps:["Runs static analysis plus manual data-flow tracing of every untrusted input.","Scans dependencies for known CVEs and licence risk, and generates a software bill of materials.","Assesses all ten OWASP Top 10 categories against the real code, not the design docs.","Deep-dives authentication, PII handling, infrastructure and cloud posture against CIS benchmarks.","Builds a STRIDE threat model, scoring findings with CVSS 3.1 and prescribing specific fixes."],
+  ev:["OWASP Top 10 + ASVS","STRIDE","CVSS 3.1","NIST SP 800-53","CWE/SANS Top 25","CIS Benchmarks"],
+  out:["Security Review","Individual Findings","Threat Model","SBOM"]},
+"11":{name:"CI/CD Agent",track:"Ship",gate:"DevOps / Platform Engineer approval",
+  one:"Designs and builds the complete automated pipeline — build, test, security scan and staged deployment — so broken code never lands on the main branch.",
+  steps:["Confirms the pipeline strategy (platform, registry, deployment target, environments) before generating anything.","Writes a production-optimised, non-root, multi-stage container build with a health check.","Builds a fail-first CI pipeline: quality → tests → security scan → build → coverage gate.","Creates staged and production pipelines where production never auto-deploys and rollback is built in.","Documents every required secret by name — values never included — and any server-side setup."],
+  ev:["Coverage-gated CI","Container hardening","Scan-on-every-PR","Explicit-trigger prod deploys"],
+  out:["Pipeline code (Dockerfile, workflows)","CI/CD Architecture","Secrets Manifest","Setup guide"]},
+"12":{name:"Deployment Agent",track:"Ship",gate:"DevOps deployment-gate approval",
+  one:"Orchestrates the production release as a deliberate, reversible event — readiness checklist, safe rollout, active monitoring and a tested rollback plan.",
+  steps:["Runs a full pre-deployment readiness checklist against real evidence — tests green, security cleared, UAT signed off — no rubber-stamping.","Generates plain-language release notes mapped to work items, plus breaking-change notices.","Chooses and documents a blue/green or canary rollout so traffic can be reverted in seconds.","Runs post-deployment smoke tests and actively monitors error rate, latency and resources for at least 30 minutes.","Prepares a version-specific rollback runbook with exact commands before the deploy begins."],
+  ev:["Google SRE release engineering","ITIL 4 Change Enablement","Blue-Green","Canary Release"],
+  out:["Release Notes","Rollback Runbook","Deployment Log","Readiness verdict"]},
+"00":{name:"Onboarding Agent",track:"Entry · Brownfield",gate:"Product Owner sign-off",
+  one:"Ingests everything an in-flight project already has — docs, tickets, designs, tests, code — maps it to the platform, and positions it to resume from the right phase.",
+  steps:["Scans every connected source in any format or language, prioritising the highest-quality evidence first.","Assesses each lifecycle phase as Complete / Partial / Missing with an explicit confidence level.","Registers what already exists as pointers — never re-creating it — and reformats partial material without inventing content.","Clearly labels inferred vs confirmed information and flags anything needing human input.","Produces a gap report naming every blocker and the recommended phase to resume from."],
+  ev:["BABOK v3","IEEE 830","Working Effectively with Legacy Code","Fowler PoEAA"],
+  out:["Discovery assessment","Reconciled existing artifacts","Gap Report + resume phase"]},
+"00b":{name:"Context Bridge Agent",track:"Entry · Brownfield",gate:"Architect approval",
+  one:"Extracts the single authoritative API/data contract in split or multi-repo projects so every team builds against exactly the same interface.",
+  steps:["Extracts the real contract from source code — types, actual API calls, auth, validation — rather than from stale docs.","Separates what is truly shared between repos from each repo's internal implementation.","Captures endpoints, data models, business rules, NFRs and error codes with a confidence level on each.","Versions the contract semantically so any breaking change is detected automatically as 'drift' across all consumers.","Lets consumer repos read the current contract live and records the dependency, so it can never silently go stale."],
+  ev:["OpenAPI 3.1","Semantic Versioning 2.0","Google API Design Guide","REST Maturity Model"],
+  out:["Single versioned API Contract","Shared data models","Error-code inventory","Provenance"]},
+"00c":{name:"Codebase Intelligence Agent",track:"Entry · Brownfield",gate:"Tech Lead approval",
+  one:"Turns an undocumented codebase into an AI-queryable knowledge base so every later phase understands the system without re-reading all the code.",
+  steps:["Indexes the whole codebase into five layers: dependency graph, git analytics, code health, documentation and decision history.","Identifies 'hotspots' — where high change-rate meets high complexity, where bugs and risk concentrate.","Surfaces dead code, hidden coupling (files that change together), and single-owner / bus-factor risks.","Reconstructs why the system was built the way it was, flagging decisions that may now be stale.","Recommends the right SDLC entry point, always distinguishing measured facts from inferences."],
+  ev:["Software Design X-Rays","Chidamber & Kemerer metrics","Lehman's Laws of Evolution"],
+  out:["Codebase intelligence report","Dependency graph","Git analytics","Dead-code inventory","ADRs"]},
+};
+
+/* ============================ RENDER RAIL ============================ */
+const rail = document.getElementById('rail');
+ACTS.forEach(act=>{
+  const wrap=document.createElement('div');wrap.className='act';
+  const h=document.createElement('div');h.className='act-h';h.textContent=act.name;wrap.appendChild(h);
+  act.phases.forEach(code=>{
+    const a=AGENTS[code];
+    const btn=document.createElement('button');
+    btn.className='node'+(code.startsWith('00')?' entry':'');
+    btn.dataset.code=code;
+    const isEntry=code.startsWith('00');
+    btn.innerHTML=`<span class="code">${code.toUpperCase()}</span><span class="nm">${a.name.replace(' Agent','')}</span><span class="gate-dot" title="Human approval gate"></span>`;
+    btn.addEventListener('click',()=>select(code));
+    wrap.appendChild(btn);
+  });
+  rail.appendChild(wrap);
+});
+
+/* ============================ RENDER DETAIL ============================ */
+const detail=document.getElementById('detail');
+function select(code){
+  const a=AGENTS[code];
+  const isEntry=code.startsWith('00');
+  document.querySelectorAll('.node').forEach(n=>n.classList.toggle('sel',n.dataset.code===code));
+  detail.innerHTML=`
+    <div class="d-eyebrow">
+      <span class="track ${isEntry?'entry':''}">${a.track}</span>
+      <span>Phase ${code.toUpperCase()}</span>
+    </div>
+    <h3 class="d-name">${a.name}</h3>
+    <p class="d-one">${a.one}</p>
+
+    <div class="d-section-t">Behind the scenes<span class="ln"></span></div>
+    <ul class="steps">${a.steps.map(s=>`<li>${s}</li>`).join('')}</ul>
+
+    <div class="d-section-t">Evidence base &amp; standards<span class="ln"></span></div>
+    <div class="chips">${a.ev.map(e=>`<span class="chip std">${e}</span>`).join('')}</div>
+
+    <div class="d-section-t">What it produces<span class="ln"></span></div>
+    <div class="d-out">${a.out.map(o=>`<span class="chip">${o}</span>`).join('')}</div>
+
+    <div class="gate-callout">
+      <div class="seal">◕</div>
+      <div><div class="gc-t">Human gate</div><div class="gc-b">${a.gate}</div></div>
+    </div>`;
+}
+select('01');
+
+/* ============================ REVEAL ON SCROLL ============================ */
+const io=new IntersectionObserver((es)=>{
+  es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});
+},{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+/* ============================ NAV ACTIVE STATE ============================ */
+const sections=[...document.querySelectorAll('section[id]')];
+const navmap={};document.querySelectorAll('#nav a').forEach(a=>navmap[a.getAttribute('href').slice(1)]=a);
+const navio=new IntersectionObserver((es)=>{
+  es.forEach(e=>{if(e.isIntersecting){
+    Object.values(navmap).forEach(a=>a.classList.remove('active'));
+    if(navmap[e.target.id])navmap[e.target.id].classList.add('active');
+  }});
+},{rootMargin:'-45% 0px -50% 0px'});
+sections.forEach(s=>navio.observe(s));
+</script>
